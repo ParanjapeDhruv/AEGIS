@@ -1,0 +1,1 @@
+"""Report database model."""

@@ -1,0 +1,1 @@
+"""Password strength analysis service."""

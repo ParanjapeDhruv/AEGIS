@@ -1,0 +1,1 @@
+"""Security assistant API routes."""
