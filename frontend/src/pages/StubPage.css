@@ -1,0 +1,24 @@
+.stub {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 60vh;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.stub-icon { font-size: 56px; opacity: 0.6; }
+.stub-title { font-size: 20px; font-weight: 600; color: var(--text-primary); }
+.stub-desc { font-size: 14px; max-width: 360px; }
+
+.stub-badge {
+  padding: 4px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
