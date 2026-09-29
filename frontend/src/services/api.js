@@ -6,11 +6,17 @@
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api'
 
-async function request(method, path, body) {
-  const options = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
+function getToken() {
+  return localStorage.getItem('aegis_token')
+}
+
+async function request(method, path, body, requiresAuth = false) {
+  const headers = { 'Content-Type': 'application/json' }
+  if (requiresAuth) {
+    const token = getToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
   }
+  const options = { method, headers }
   if (body !== undefined) options.body = JSON.stringify(body)
 
   const res = await fetch(`${BASE_URL}${path}`, options)
@@ -23,10 +29,9 @@ async function request(method, path, body) {
 
 // -- Auth ------------------------------------------------------------------
 export const auth = {
-  login:    (email, password)    => request('POST', '/auth/login', { email, password }),
+  login:    (email, password)    => request('POST', '/auth/login',    { email, password }),
   register: (data)               => request('POST', '/auth/register', data),
-  logout:   ()                   => request('POST', '/auth/logout'),
-  me:       ()                   => request('GET',  '/auth/me'),
+  me:       ()                   => request('GET',  '/auth/me', undefined, true),
 }
 
 // -- Dashboard -------------------------------------------------------------
