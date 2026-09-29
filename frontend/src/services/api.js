@@ -1,0 +1,70 @@
+/**
+ * AEGIS API Service Layer
+ * All backend calls are centralised here.
+ * Components never call fetch() directly.
+ */
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/api'
+
+async function request(method, path, body) {
+  const options = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  }
+  if (body !== undefined) options.body = JSON.stringify(body)
+
+  const res = await fetch(`${BASE_URL}${path}`, options)
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail ?? 'Request failed')
+  }
+  return res.json()
+}
+
+// -- Auth ------------------------------------------------------------------
+export const auth = {
+  login:    (email, password)    => request('POST', '/auth/login', { email, password }),
+  register: (data)               => request('POST', '/auth/register', data),
+  logout:   ()                   => request('POST', '/auth/logout'),
+  me:       ()                   => request('GET',  '/auth/me'),
+}
+
+// -- Dashboard -------------------------------------------------------------
+export const dashboard = {
+  getSummary: () => request('GET', '/dashboard/summary'),
+}
+
+// -- URL Analysis ----------------------------------------------------------
+export const urlAnalysis = {
+  analyze: (url) => request('POST', '/url-analysis', { url }),
+}
+
+// -- Phishing --------------------------------------------------------------
+export const phishing = {
+  analyze: (emailText) => request('POST', '/phishing', { email_text: emailText }),
+}
+
+// -- Password --------------------------------------------------------------
+export const password = {
+  analyze: (pwd) => request('POST', '/password', { password: pwd }),
+}
+
+// -- AI Assistant ----------------------------------------------------------
+export const assistant = {
+  chat:    (message, history) => request('POST', '/assistant/chat', { message, history }),
+  history: ()                 => request('GET',  '/assistant/history'),
+}
+
+// -- Scan History ----------------------------------------------------------
+export const scanHistory = {
+  list:      (params) => request('GET',  `/scans?${new URLSearchParams(params)}`),
+  getById:   (id)     => request('GET',  `/scans/${id}`),
+  deleteById:(id)     => request('DELETE',`/scans/${id}`),
+}
+
+// -- Reports ---------------------------------------------------------------
+export const reports = {
+  list:     () => request('GET',  '/reports'),
+  getById:  (id) => request('GET', `/reports/${id}`),
+  generate: (data) => request('POST', '/reports', data),
+}
