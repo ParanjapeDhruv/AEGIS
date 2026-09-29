@@ -51,7 +51,7 @@ export const phishing = {
 
 // -- Password --------------------------------------------------------------
 export const password = {
-  analyze: (pwd) => request('POST', '/password', { password: pwd }),
+  analyze: (pwd) => request('POST', '/v1/analysis/password', { password: pwd }, true),
 }
 
 // -- AI Assistant ----------------------------------------------------------
