@@ -20,6 +20,15 @@ async function request(method, path, body, requiresAuth = false) {
   if (body !== undefined) options.body = JSON.stringify(body)
 
   const res = await fetch(`${BASE_URL}${path}`, options)
+
+  // Token expired or invalid — clear local storage and redirect to login
+  if (res.status === 401) {
+    localStorage.removeItem('aegis_token')
+    localStorage.removeItem('aegis_user')
+    window.location.href = '/login'
+    throw new Error('Session expired. Please sign in again.')
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail ?? 'Request failed')
