@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.auth import router as auth_router
+from backend.app.api.password import router as password_router
 from backend.app.core.config import settings
 from backend.app.core.database import Base, engine
 
@@ -34,6 +35,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix="/api")
+app.include_router(password_router, prefix="/api")
 
 
 @app.get("/health", tags=["health"])
