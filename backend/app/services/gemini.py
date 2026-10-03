@@ -26,7 +26,7 @@ _client_lock = threading.Lock()
 _client: Any = None          # google.genai.Client once initialised
 _client_error: str = ""      # set if init failed, prevents repeated retries
 
-_MODEL = "gemini-2.5-flash"  # fast, low-latency model suitable for explanations
+_MODEL = "gemini-3.8-flash"  # fast, low-latency model suitable for explanations
 _TIMEOUT_SECONDS = 20        # hard wall-clock timeout per request
 _MAX_OUTPUT_TOKENS = 1024    # cap to keep responses focused but not truncated
 
@@ -134,36 +134,48 @@ def generate(prompt: str) -> tuple[str | None, GeminiError | None]:
     if client is None:
         return None, last_error() or GeminiError.NOT_CONFIGURED
 
-    result: list[str | None] = [None]
-    exc_box: list[Exception | None] = [None]
+    # Retry once on 503 UNAVAILABLE (transient demand spike)
+    _MAX_RETRIES = 2
+    for attempt in range(_MAX_RETRIES):
+        result: list[str | None] = [None]
+        exc_box: list[Exception | None] = [None]
 
-    def _call() -> None:
-        try:
-            from google.genai import types  # type: ignore[import]
-            response = client.models.generate_content(
-                model=_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=_MAX_OUTPUT_TOKENS,
-                    temperature=0.2,      # low temperature → more consistent output
-                    candidate_count=1,
-                ),
-            )
-            result[0] = response.text
-        except Exception as exc:
-            exc_box[0] = exc
+        def _call() -> None:
+            try:
+                from google.genai import types  # type: ignore[import]
+                response = client.models.generate_content(
+                    model=_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=_MAX_OUTPUT_TOKENS,
+                        temperature=0.2,
+                        candidate_count=1,
+                    ),
+                )
+                result[0] = response.text
+            except Exception as exc:
+                exc_box[0] = exc
 
-    thread = threading.Thread(target=_call, daemon=True)
-    thread.start()
-    thread.join(timeout=_TIMEOUT_SECONDS)
+        thread = threading.Thread(target=_call, daemon=True)
+        thread.start()
+        thread.join(timeout=_TIMEOUT_SECONDS)
 
-    if thread.is_alive():
-        logger.warning("Gemini request timed out after %ss", _TIMEOUT_SECONDS)
-        return None, GeminiError.TIMEOUT
+        if thread.is_alive():
+            logger.warning("Gemini request timed out after %ss", _TIMEOUT_SECONDS)
+            return None, GeminiError.TIMEOUT
 
-    if exc_box[0] is not None:
-        logger.warning("Gemini request failed: %s", exc_box[0])
-        return None, GeminiError.API_ERROR
+        if exc_box[0] is not None:
+            err_str = str(exc_box[0])
+            # Retry once on 503 UNAVAILABLE (transient high-demand spike)
+            if "503" in err_str and attempt < _MAX_RETRIES - 1:
+                logger.warning("Gemini 503 on attempt %d, retrying…", attempt + 1)
+                import time as _time
+                _time.sleep(2)
+                continue
+            logger.warning("Gemini request failed: %s", exc_box[0])
+            return None, GeminiError.API_ERROR
+
+        break  # success — exit retry loop
 
     raw = result[0]
     if not raw or not raw.strip():
