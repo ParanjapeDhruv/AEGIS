@@ -54,8 +54,9 @@ export const urlAnalysis = {
 }
 
 // -- Phishing --------------------------------------------------------------
+// data: { sender, reply_to, subject, body, links, attachment_names }
 export const phishing = {
-  analyze: (emailText) => request('POST', '/phishing', { email_text: emailText }),
+  analyze: (data) => request('POST', '/v1/analysis/email', data, true),
 }
 
 // -- Password --------------------------------------------------------------
