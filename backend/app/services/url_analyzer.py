@@ -1,302 +1,585 @@
-"""
-Deterministic URL phishing/threat analyser.
+﻿"""
+Deterministic URL phishing/threat analyser — v2.0-heuristic.
 
-Feature extraction + risk scoring — no external API calls, no ML, no Gemini.
-HTTPS presence is noted but NEVER used as a safety signal on its own.
+Design: zero network I/O, fully deterministic, HTTPS never a safety signal.
 """
+from __future__ import annotations
 
 import ipaddress
+import math
 import re
+import unicodedata
 from dataclasses import dataclass, field
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
+
+import tldextract as _tldextract
 
 from backend.app.schemas.url_analysis import Indicator
+from backend.app.services.url_data.brands import (
+    ALL_LEGITIMATE, BRANDS, CONFUSABLES, CREDENTIAL_KEYWORDS,
+    FREENOM_TLDS, LIGHT_RISKY_TLDS, MEDIUM_RISKY_TLDS,
+    REDIRECT_PARAMS, URL_SHORTENERS,
+)
 
-# ---------------------------------------------------------------------------
-# Reference data (all in-process, no network)
-# ---------------------------------------------------------------------------
+_TLD = _tldextract.TLDExtract(
+    suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True
+)
 
-# High-risk TLDs frequently abused in phishing campaigns
-_RISKY_TLDS: frozenset[str] = frozenset({
-    ".tk", ".ml", ".ga", ".cf", ".gq",       # Freenom free TLDs
-    ".xyz", ".top", ".click", ".link",
-    ".online", ".site", ".info", ".biz",
-    ".pw", ".cc", ".su", ".icu",
-})
+ANALYSIS_VERSION = "2.0-heuristic"
 
-# Suspicious keywords commonly embedded in phishing URLs
-_PHISHING_KEYWORDS: frozenset[str] = frozenset({
-    "login", "signin", "sign-in", "account", "verify", "verification",
-    "secure", "security", "update", "confirm", "bank", "paypal", "ebay",
-    "amazon", "google", "microsoft", "apple", "facebook", "instagram",
-    "support", "helpdesk", "password", "credential", "wallet",
-    "crypto", "bitcoin", "urgent", "suspended", "limited", "unusual",
-    "activity", "alert", "invoice", "payment", "refund",
-})
+_W: dict[str, float] = {
+    "no_https": 0.05, "long_url": 0.05, "very_long_url": 0.10,
+    "brand_impersonation": 0.50, "typosquat": 0.55, "homograph": 0.60,
+    "brand_in_path": 0.05, "credential_kw_host": 0.15,
+    "credential_kw_path": 0.03, "multiple_kw": 0.25,
+    "freenom_tld": 0.20, "medium_risky_tld": 0.12, "light_risky_tld": 0.08,
+    "excessive_subdomains": 0.15, "hyphen_heavy": 0.10, "punycode_label": 0.25,
+    "public_ip": 0.45, "obfuscated_ip": 0.60, "non_public_address": 0.08,
+    "deceptive_userinfo": 0.60, "external_redirect": 0.30,
+    "encoded_hostname": 0.50, "double_encoding": 0.25, "excessive_encoding": 0.12,
+    "shortener": 0.15, "nondefault_port": 0.10, "double_slash_path": 0.04,
+    "high_entropy_label": 0.10, "control_chars": 0.30, "had_backslash": 0.20,
+}
 
-# Brands frequently impersonated — if in subdomain/path but not registrable domain
-_BRAND_NAMES: frozenset[str] = frozenset({
-    "paypal", "amazon", "google", "microsoft", "apple", "facebook",
-    "netflix", "instagram", "twitter", "linkedin", "dropbox",
-    "chase", "wellsfargo", "bankofamerica", "citibank",
-})
-
-# Excessive subdomains threshold
-_MAX_SAFE_SUBDOMAINS = 3
+_LEVEL_CUTS = ((1, "safe"), (20, "low"), (45, "medium"), (70, "high"), (101, "critical"))
+_SEV_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 
 
-# ---------------------------------------------------------------------------
-# Data container
-# ---------------------------------------------------------------------------
+@dataclass
+class ParsedUrl:
+    scheme: str
+    userinfo: str
+    host_ascii: str
+    host_unicode: str
+    port: int | None
+    path: str
+    query_pairs: list[tuple[str, str]]
+    fragment: str
+    had_backslash: bool
+    had_control_chars: bool
+    encoding_depth: int
+    host_was_percent_encoded: bool
+    raw_query: str
+
+
+def _strip_control(s: str) -> tuple[str, bool]:
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", s)
+    return cleaned, cleaned != s
+
+
+def _percent_decode_depth(s: str) -> tuple[str, int]:
+    from urllib.parse import unquote
+    depth, current = 0, s
+    for _ in range(3):
+        decoded = unquote(current)
+        if decoded == current:
+            break
+        current, depth = decoded, depth + 1
+    return current, depth
+
+
+def _apply_confusables(s: str) -> str:
+    result = s
+    for src, dst in CONFUSABLES.items():
+        if len(src) > 1:
+            result = result.replace(src, dst)
+    return "".join(CONFUSABLES.get(ch, ch) for ch in result)
+
+
+def parse_url(raw: str) -> ParsedUrl:
+    """Parse raw URL carefully without global unquoting. Raises ValueError for no host."""
+    s, had_control = _strip_control(raw.strip())
+    had_backslash = False
+    if re.match(r"^https?://", s, re.IGNORECASE):
+        new_s = s.replace("\\", "/")
+        had_backslash, s = new_s != s, new_s
+
+    split = urlsplit(s)
+    scheme = split.scheme.lower()
+    raw_netloc = split.netloc
+    host_was_pct = "%" in raw_netloc
+
+    userinfo = ""
+    netloc_noport = raw_netloc
+    if "@" in raw_netloc:
+        userinfo, _, netloc_noport = raw_netloc.rpartition("@")
+
+    host_raw, port = netloc_noport, None
+    if netloc_noport.startswith("["):
+        # IPv6 literal
+        bracket_end = netloc_noport.find("]")
+        if bracket_end != -1:
+            host_raw = netloc_noport[1:bracket_end]
+            rest = netloc_noport[bracket_end + 1:]
+            if rest.startswith(":") and rest[1:].isdigit():
+                port = int(rest[1:])
+    elif ":" in netloc_noport:
+        h, _, p = netloc_noport.rpartition(":")
+        if p.isdigit():
+            host_raw, port = h, int(p)
+
+    host_decoded, enc_depth = _percent_decode_depth(host_raw)
+    host_lower = host_decoded.lower().rstrip(".")
+    try:
+        host_ascii = host_lower.encode("idna").decode("ascii")
+    except (UnicodeError, UnicodeDecodeError, UnicodeError):
+        host_ascii = host_lower
+
+    if not host_ascii:
+        raise ValueError(f"No valid host in URL: {raw!r}")
+
+    raw_q = split.query or ""
+    try:
+        q_pairs = parse_qsl(raw_q, keep_blank_values=True)
+    except Exception:
+        q_pairs = []
+
+    return ParsedUrl(
+        scheme=scheme, userinfo=userinfo, host_ascii=host_ascii,
+        host_unicode=host_lower, port=port, path=split.path,
+        query_pairs=q_pairs, fragment=split.fragment,
+        had_backslash=had_backslash, had_control_chars=had_control,
+        encoding_depth=enc_depth, host_was_percent_encoded=host_was_pct,
+        raw_query=raw_q,
+    )
+
+
+def _normalize_for_display(p: ParsedUrl) -> str:
+    netloc = f"{p.host_ascii}:{p.port}" if p.port else p.host_ascii
+    query = "&".join(f"{k}={v}" for k, v in p.query_pairs) if p.query_pairs else ""
+    return urlunsplit((p.scheme, netloc, p.path, query, ""))
+
+
+def redact_url_for_storage(raw_url: str) -> str:
+    """URL for DB: query values redacted, userinfo/fragment dropped."""
+    try:
+        p = parse_url(raw_url)
+    except ValueError:
+        return raw_url[:2048]
+    netloc = f"{p.host_ascii}:{p.port}" if p.port else p.host_ascii
+    query = "&".join(f"{k}=REDACTED" for k, _ in p.query_pairs) if p.query_pairs else ""
+    return urlunsplit((p.scheme, netloc, p.path, query, ""))
+
+
+def _noisy_or(weights: list[float]) -> int:
+    if not weights:
+        return 0
+    prod = 1.0
+    for w in weights:
+        prod *= (1.0 - max(0.0, min(1.0, w)))
+    return round(100 * (1.0 - prod))
+
+
+def _score_to_level(score: int) -> str:
+    if score == 0:
+        return "safe"
+    for threshold, label in _LEVEL_CUTS:
+        if score < threshold:
+            return label
+    return "critical"
+
 
 @dataclass
 class _Ctx:
-    raw_url: str
-    parsed:  object = field(init=False)
+    parsed: ParsedUrl
+    ext: object
     indicators: list[Indicator] = field(default_factory=list)
-    recommendations: list[str]  = field(default_factory=list)
-    score: int = 0
+    recommendations: list[str] = field(default_factory=list)
+    _weights: list[float] = field(default_factory=list)
+    _ids: set[str] = field(default_factory=set)
 
-    def __post_init__(self):
-        self.parsed = urlparse(self.normalized)
-
-    @property
-    def normalized(self) -> str:
-        """Lowercase scheme+host, preserve path/query, decode percent-encoding."""
-        u = self.raw_url.strip()
-        # Decode percent-encoding in the URL (but keep structure)
-        decoded = unquote(u)
-        # Re-parse to normalise
-        p = urlparse(decoded)
-        return p.geturl()
-
-    def add(self, name: str, detail: str, severity: str, weight: int) -> None:
-        self.indicators.append(Indicator(name=name, detail=detail, severity=severity))
-        self.score += weight
+    def add(self, ind_id: str, name: str, detail: str, severity: str) -> None:
+        if ind_id in self._ids:
+            return
+        self._ids.add(ind_id)
+        w = _W.get(ind_id, 0.0)
+        self._weights.append(w)
+        self.indicators.append(Indicator(
+            id=ind_id, name=name, detail=detail,
+            severity=severity, weight=round(w * 100),
+        ))
 
     def rec(self, text: str) -> None:
         if text not in self.recommendations:
             self.recommendations.append(text)
 
+    @property
+    def registrable(self) -> str:
+        return f"{self.ext.domain}.{self.ext.suffix}" if self.ext.domain and self.ext.suffix else self.parsed.host_ascii
 
-# ---------------------------------------------------------------------------
-# Individual checks
-# ---------------------------------------------------------------------------
+    @property
+    def host_tokens(self) -> list[str]:
+        tokens: list[str] = []
+        for label in self.parsed.host_ascii.split("."):
+            tokens.extend(label.split("-"))
+        return [t for t in tokens if t]
 
-def _check_length(ctx: _Ctx) -> None:
-    length = len(ctx.raw_url)
-    if length > 100:
-        ctx.add("Long URL", f"URL is {length} characters — long URLs are often used to hide the real destination.", "low", 5)
-    if length > 150:
-        ctx.add("Very long URL", f"URL is {length} characters — extremely long URLs are a common obfuscation technique.", "medium", 10)
-        ctx.rec("Inspect the full URL carefully before clicking.")
+
+def _try_parse_ip(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    if re.match(r"^0[xX][0-9a-fA-F]+$", host):
+        try:
+            return ipaddress.IPv4Address(int(host, 16))
+        except Exception:
+            pass
+    if re.match(r"^\d+$", host):
+        try:
+            v = int(host)
+            if 0 <= v <= 0xFFFFFFFF:
+                return ipaddress.IPv4Address(v)
+        except Exception:
+            pass
+    if "." in host:
+        parts = host.split(".")
+        if len(parts) == 4:
+            try:
+                octets = []
+                for p in parts:
+                    if p.startswith(("0x", "0X")):
+                        octets.append(int(p, 16))
+                    elif p.startswith("0") and len(p) > 1:
+                        octets.append(int(p, 8))
+                    else:
+                        octets.append(int(p))
+                if all(0 <= o <= 255 for o in octets):
+                    return ipaddress.IPv4Address(bytes(octets))
+            except Exception:
+                pass
+    return None
+
+
+def _check_control_backslash(ctx: _Ctx) -> None:
+    if ctx.parsed.had_control_chars:
+        ctx.add("control_chars", "Control characters in URL",
+                "The URL contains ASCII control characters — a sign of obfuscation.", "high")
+        ctx.rec("URLs with control characters are almost certainly malicious.")
+    if ctx.parsed.had_backslash:
+        ctx.add("had_backslash", "Backslash in URL authority",
+                "Backslash before the host is treated as '/' by browsers but trips naive parsers.", "medium")
 
 
 def _check_scheme(ctx: _Ctx) -> None:
-    # HTTPS is noted but NOT presented as a safety guarantee
-    scheme = ctx.parsed.scheme.lower()
-    if scheme == "http":
-        ctx.add("No HTTPS", "Connection is unencrypted (HTTP). Data can be intercepted in transit.", "low", 8)
-        ctx.rec("Prefer sites using HTTPS, though HTTPS alone does not guarantee safety.")
+    if ctx.parsed.scheme == "http":
+        ctx.add("no_https", "No HTTPS",
+                "Connection is unencrypted. Note: HTTPS alone does NOT prove legitimacy.", "low")
+        ctx.rec("Prefer HTTPS, though HTTPS alone does not guarantee safety.")
+
+
+def _check_length(ctx: _Ctx) -> None:
+    raw_len = (len(ctx.parsed.scheme) + 3 + len(ctx.parsed.host_ascii)
+               + (len(str(ctx.parsed.port)) + 1 if ctx.parsed.port else 0)
+               + len(ctx.parsed.path) + len(ctx.parsed.raw_query))
+    if raw_len > 150:
+        ctx.add("very_long_url", "Very long URL",
+                f"URL is {raw_len} characters — extremely long URLs often hide the real destination.", "low")
+        ctx.rec("Inspect the full URL carefully before clicking.")
+    elif raw_len > 100:
+        ctx.add("long_url", "Long URL",
+                f"URL is {raw_len} characters — longer than typical legitimate URLs.", "low")
 
 
 def _check_ip_host(ctx: _Ctx) -> None:
-    host = ctx.parsed.hostname or ""
-    # Strip port if present
-    host = host.split(":")[0]
-    try:
-        ipaddress.ip_address(host)
-        ctx.add("IP-based URL", f"Host is a raw IP address ({host}). Legitimate services almost always use domain names.", "high", 25)
-        ctx.rec("Avoid clicking URLs that use a raw IP address instead of a domain name.")
-    except ValueError:
-        pass  # Normal domain — not an issue
+    host = ctx.parsed.host_ascii
+    ip = _try_parse_ip(host)
+    if ip is None:
+        return
+    canonical = str(ip)
+    is_obfuscated = canonical != host
+    is_private = (ip.is_private or ip.is_loopback or ip.is_link_local
+                  or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+    if is_private:
+        ctx.add("non_public_address", "Non-public IP address",
+                f"Host is a non-public address ({canonical}) — a LAN device or loopback.", "info")
+    elif is_obfuscated:
+        ctx.add("obfuscated_ip", "Obfuscated IP address",
+                f"Host '{host}' is an obfuscated form of {canonical}. Legitimate services use domain names.", "high")
+        ctx.rec("Obfuscated IP addresses bypass URL filters. Treat as critical risk.")
+    else:
+        ctx.add("public_ip", "Raw public IP address",
+                f"Host is a raw public IP ({canonical}). Legitimate services almost always use domain names.", "high")
+        ctx.rec("Avoid clicking URLs that use a raw IP address.")
+
+
+def _check_userinfo(ctx: _Ctx) -> None:
+    ui = ctx.parsed.userinfo
+    if not ui:
+        return
+    if "." in ui or "@" in ui:
+        ctx.add("deceptive_userinfo", "Deceptive userinfo in URL",
+                f"Userinfo '{ui[:40]}' before '@' makes the URL appear to be on a trusted domain, "
+                f"but the browser navigates to '{ctx.parsed.host_ascii}'.", "high")
+    else:
+        ctx.add("deceptive_userinfo", "Userinfo in URL",
+                f"The URL has userinfo before '@'. Browser navigates to '{ctx.parsed.host_ascii}'.", "high")
+    ctx.rec("URLs with '@' in the authority should be treated with extreme caution.")
 
 
 def _check_subdomains(ctx: _Ctx) -> None:
-    host = ctx.parsed.hostname or ""
-    parts = host.split(".")
-    # e.g. paypal.com = 2 parts, sub.paypal.com = 3, a.b.paypal.com = 4
-    if len(parts) > _MAX_SAFE_SUBDOMAINS + 1:
-        ctx.add(
-            "Excessive subdomains",
-            f"'{host}' has {len(parts) - 2} subdomain levels — often used to impersonate legitimate brands.",
-            "medium", 15,
-        )
-        ctx.rec("Check the actual registrable domain (second-to-last + last label) carefully.")
+    sub = ctx.ext.subdomain
+    if not sub:
+        return
+    labels = [s for s in sub.split(".") if s]
+    if len(labels) >= 3:
+        ctx.add("excessive_subdomains", "Excessive subdomains",
+                f"'{ctx.parsed.host_ascii}' has {len(labels)} subdomain levels — often used to impersonate brands.",
+                "medium")
+        ctx.rec("Check the actual registrable domain carefully.")
 
 
-def _check_brand_impersonation(ctx: _Ctx) -> None:
-    host = ctx.parsed.hostname or ""
-    parts = host.split(".")
-    # Registrable domain = last two labels
-    registrable = ".".join(parts[-2:]) if len(parts) >= 2 else host
-    reg_base = parts[-2] if len(parts) >= 2 else host
-
-    full_url_lower = ctx.normalized.lower()
-
-    for brand in _BRAND_NAMES:
-        if brand in full_url_lower:
-            # Fine if the brand IS the registrable domain (e.g. paypal.com)
-            if brand == reg_base:
-                continue
-            ctx.add(
-                "Brand impersonation",
-                f"'{brand}' appears in the URL but the registrable domain is '{registrable}', not '{brand}.com'.",
-                "high", 25,
-            )
-            ctx.rec(f"Verify you are on the official {brand}.com domain before entering any credentials.")
-            break  # one impersonation finding is enough
+def _damerau_levenshtein(s1: str, s2: str) -> int:
+    if abs(len(s1) - len(s2)) > 2:
+        return 3
+    la, lb = len(s1), len(s2)
+    dp = [[0] * (lb + 1) for _ in range(la + 1)]
+    for i in range(la + 1): dp[i][0] = i
+    for j in range(lb + 1): dp[0][j] = j
+    for i in range(1, la + 1):
+        for j in range(1, lb + 1):
+            cost = 0 if s1[i-1] == s2[j-1] else 1
+            dp[i][j] = min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + cost)
+            if i > 1 and j > 1 and s1[i-1] == s2[j-2] and s1[i-2] == s2[j-1]:
+                dp[i][j] = min(dp[i][j], dp[i-2][j-2] + cost)
+    return dp[la][lb]
 
 
-def _check_suspicious_keywords(ctx: _Ctx) -> None:
-    path_query = (ctx.parsed.path + "?" + (ctx.parsed.query or "")).lower()
-    host_lower = (ctx.parsed.hostname or "").lower()
-    combined = host_lower + path_query
+def _check_brand(ctx: _Ctx) -> None:
+    reg = ctx.registrable
+    reg_label = ctx.ext.domain or ""
+    host_tok = set(ctx.host_tokens)
+    path_lower = ctx.parsed.path.lower()
 
-    found = [kw for kw in _PHISHING_KEYWORDS if kw in combined]
-    if len(found) >= 3:
-        ctx.add(
-            "Multiple phishing keywords",
-            f"URL contains {len(found)} high-risk keywords: {', '.join(found[:5])}.",
-            "high", 20,
-        )
-        ctx.rec("URLs with multiple security-related keywords are a common phishing tactic.")
-    elif len(found) >= 1:
-        ctx.add(
-            "Phishing keyword",
-            f"URL contains sensitive keyword(s): {', '.join(found)}.",
-            "medium", 10,
-        )
+    for brand_label, legit_set in BRANDS.items():
+        if reg in legit_set:
+            continue
+        # Whole-token brand match in host
+        if brand_label in host_tok:
+            ctx.add("brand_impersonation", "Brand impersonation",
+                    f"'{brand_label}' appears as a host token but registrable domain is '{reg}', not a legitimate {brand_label} domain.",
+                    "high")
+            ctx.rec(f"Verify you are on the official {brand_label} domain before entering credentials.")
+            return
+        # Brand embedded in registrable label — must be whole token after splitting on hyphens
+        folded_reg = _apply_confusables(reg_label.lower())
+        reg_tokens = set(re.split(r"[^a-z0-9]", folded_reg))
+        if brand_label in reg_tokens and brand_label != reg_label:
+            ctx.add("brand_impersonation", "Brand impersonation",
+                    f"Registrable domain '{reg}' embeds '{brand_label}' — common phishing pattern.",
+                    "high")
+            ctx.rec(f"Verify you are on the official {brand_label} domain before entering credentials.")
+            return
+        # Typosquat: DL <= 1 for brand >= 6 chars
+        if len(brand_label) >= 6:
+            folded = _apply_confusables(reg_label.lower())
+            if _damerau_levenshtein(folded, brand_label) <= 1 and folded != brand_label:
+                ctx.add("typosquat", "Possible typosquat",
+                        f"Registrable domain '{reg}' closely resembles '{brand_label}'.",
+                        "high")
+                ctx.rec("Domain closely resembles a known brand. Verify carefully before entering credentials.")
+                return
+        # Brand only in path
+        path_tokens = set(re.split(r"[^a-z0-9]", path_lower))
+        if brand_label in path_tokens and "brand_in_path" not in ctx._ids:
+            ctx.add("brand_in_path", "Brand name in URL path",
+                    f"'{brand_label}' appears in the URL path — may be legitimate but verify the domain.",
+                    "info")
+
+    _check_homograph(ctx)
+
+
+def _check_homograph(ctx: _Ctx) -> None:
+    for label in ctx.parsed.host_ascii.split("."):
+        if not label.startswith("xn--"):
+            continue
+        try:
+            decoded = label.encode("ascii").decode("idna")
+        except Exception:
+            decoded = label
+        scripts = {unicodedata.name(ch, "").split(" ")[0]
+                   for ch in decoded if ch.isalpha()}
+        scripts.discard("LATIN")
+        scripts.discard("")
+        if scripts:
+            ctx.add("homograph", "Homograph / mixed-script domain",
+                    f"Label '{label}' decodes to '{decoded}' with non-Latin characters ({', '.join(scripts)}).",
+                    "high")
+            ctx.rec("Non-Latin characters that mimic Latin letters are a homograph attack. Do not trust the visual appearance.")
+        else:
+            ctx.add("punycode_label", "Punycode domain label",
+                    f"Label '{label}' is punycode-encoded — verify it does not resemble a trusted brand.",
+                    "medium")
+        break
+
+
+def _check_keywords(ctx: _Ctx) -> None:
+    """Credential keyword detection — token-based, location-weighted.
+    Suppressed entirely for known-legitimate registrable domains to avoid
+    false positives on e.g. login.microsoftonline.com.
+    """
+    # Skip keyword detection for fully legitimate brand domains
+    if ctx.registrable in ALL_LEGITIMATE:
+        return
+
+    def tok(s: str) -> set[str]:
+        return {t for t in re.split(r"[^a-z0-9]", s.lower()) if t}
+
+    host_kw = CREDENTIAL_KEYWORDS & tok(ctx.parsed.host_ascii)
+    path_kw = CREDENTIAL_KEYWORDS & tok(ctx.parsed.path)
+    total = host_kw | path_kw
+
+    if len(total) >= 3:
+        ctx.add("multiple_kw", "Multiple credential keywords",
+                f"URL contains {len(total)} credential-related keywords: {', '.join(sorted(total)[:5])}.",
+                "high")
+        ctx.rec("Multiple security-related keywords in a URL are a strong phishing indicator.")
+    elif host_kw:
+        ctx.add("credential_kw_host", "Credential keyword in hostname",
+                f"Credential keyword '{next(iter(host_kw))}' found in the hostname.",
+                "medium")
+    elif len(path_kw) >= 2:
+        ctx.add("credential_kw_path", "Credential keywords in path",
+                f"Credential keywords in path: {', '.join(sorted(path_kw)[:3])}.",
+                "low")
 
 
 def _check_tld(ctx: _Ctx) -> None:
-    host = ctx.parsed.hostname or ""
-    for tld in _RISKY_TLDS:
-        if host.endswith(tld):
-            ctx.add(
-                "High-risk TLD",
-                f"The domain uses '{tld}', a TLD commonly associated with free/throwaway domains used in phishing.",
-                "medium", 15,
-            )
-            ctx.rec("Treat URLs on free TLDs with extra caution.")
-            break
+    suffix = ctx.ext.suffix or ""
+    tld = suffix.split(".")[-1] if suffix else ""
+    if tld in FREENOM_TLDS:
+        ctx.add("freenom_tld", "High-risk free TLD",
+                f"Domain uses '.{tld}', a Freenom free TLD widely abused for phishing.", "high")
+        ctx.rec("Free TLDs (.tk, .ml, .ga, .cf, .gq) are heavily used in phishing. Treat with extreme caution.")
+    elif tld in MEDIUM_RISKY_TLDS:
+        ctx.add("medium_risky_tld", "Risky TLD",
+                f"Domain uses '.{tld}', frequently associated with throwaway domains.", "medium")
+    elif tld in LIGHT_RISKY_TLDS:
+        ctx.add("light_risky_tld", "Elevated-risk TLD",
+                f"Domain uses '.{tld}', with elevated misuse rates.", "low")
 
 
 def _check_encoding(ctx: _Ctx) -> None:
-    # Percent-encoding in host is a strong obfuscation signal
-    raw_host = (urlparse(ctx.raw_url).hostname or "")
-    if "%" in raw_host:
-        ctx.add(
-            "Encoded hostname",
-            "The hostname contains percent-encoded characters — a common obfuscation technique.",
-            "high", 25,
-        )
-        ctx.rec("Percent-encoded hostnames are used to bypass filters. Do not visit this URL.")
-
-    # Count % sequences in the RAW URL path/query (before normalisation decodes them)
-    raw_parsed = urlparse(ctx.raw_url)
-    raw_path_query = raw_parsed.path + (raw_parsed.query or "")
-    pct_count = raw_path_query.count("%")
-    if pct_count >= 5:
-        ctx.add(
-            "Excessive URL encoding",
-            f"{pct_count} percent-encoded sequences found in path/query — often used to hide malicious content.",
-            "medium", 15,
-        )
-
-def _check_suspicious_chars(ctx: _Ctx) -> None:
-    host = ctx.parsed.hostname or ""
-
-    # @ in URL — everything before @ is ignored by browsers (user-info trick)
-    if "@" in ctx.raw_url.split("?")[0]:
-        ctx.add(
-            "@ symbol in URL",
-            "A '@' before the path causes browsers to ignore everything before it — classic phishing trick.",
-            "high", 30,
-        )
-        ctx.rec("URLs containing '@' before the domain are almost always phishing attempts.")
-
-    # Double slash in path (not the scheme //)
-    path = ctx.parsed.path
-    if "//" in path:
-        ctx.add("Double slash in path", "Double slashes in the URL path can confuse parsers and hide the real destination.", "low", 5)
-
-    # Homograph / punycode
-    if host.startswith("xn--"):
-        ctx.add(
-            "Punycode domain",
-            f"'{host}' is a punycode-encoded domain — may visually impersonate a well-known brand.",
-            "high", 20,
-        )
-        ctx.rec("Check if this punycode domain visually resembles a trusted brand when decoded.")
-
-    # Hyphen abuse: many hyphens in domain
-    domain_part = host.split(".")[0] if "." in host else host
-    if domain_part.count("-") >= 3:
-        ctx.add(
-            "Hyphen-heavy domain",
-            f"'{host}' contains {domain_part.count('-')} hyphens — domains like 'secure-login-paypal-verify.com' are common phishing patterns.",
-            "medium", 10,
-        )
+    if ctx.parsed.host_was_percent_encoded:
+        ctx.add("encoded_hostname", "Percent-encoded hostname",
+                "Hostname contains percent-encoded characters — obfuscation to bypass URL filters.", "high")
+        ctx.rec("Percent-encoded hostnames are used to bypass filters. Do not visit.")
+    if ctx.parsed.encoding_depth >= 2:
+        ctx.add("double_encoding", "Double URL encoding",
+                f"URL is encoded {ctx.parsed.encoding_depth} times — double encoding evades security scanners.", "medium")
+    raw_pct = ctx.parsed.path.count("%") + ctx.parsed.raw_query.count("%")
+    if raw_pct >= 5:
+        ctx.add("excessive_encoding", "Excessive URL encoding",
+                f"{raw_pct} percent-encoded sequences in path/query.", "medium")
 
 
-def _check_redirect_indicators(ctx: _Ctx) -> None:
-    """Flag URL-redirect patterns in the query string (no network call)."""
-    query = (ctx.parsed.query or "").lower()
-    redirect_params = ["url=", "redirect=", "next=", "goto=", "return=", "returnurl=", "redir=", "forward="]
-    for param in redirect_params:
-        if param in query:
-            ctx.add(
-                "Open redirect parameter",
-                f"Query string contains '{param}' — a potential open-redirect that could forward you to a malicious site.",
-                "medium", 15,
-            )
-            ctx.rec("URLs with redirect parameters may chain you to a malicious destination.")
+def _check_port(ctx: _Ctx) -> None:
+    if ctx.parsed.port is not None and ctx.parsed.port not in {80, 443, 8080, 8443}:
+        ctx.add("nondefault_port", "Non-standard port",
+                f"URL uses port {ctx.parsed.port} — legitimate sites rarely use non-standard ports.", "low")
+
+
+def _check_shortener(ctx: _Ctx) -> None:
+    if ctx.registrable in URL_SHORTENERS:
+        ctx.add("shortener", "URL shortener",
+                f"'{ctx.parsed.host_ascii}' is a URL shortener — the true destination is hidden.", "medium")
+        ctx.rec("Expand the short URL using a preview tool before visiting.")
+
+
+def _check_redirect(ctx: _Ctx) -> None:
+    for key, value in ctx.parsed.query_pairs:
+        if key.lower() not in REDIRECT_PARAMS:
+            continue
+        if not (value.startswith("http") or value.startswith("//")):
+            continue
+        try:
+            ext_dest = _TLD(value)
+            dest_reg = f"{ext_dest.domain}.{ext_dest.suffix}" if ext_dest.domain else ""
+        except Exception:
+            continue
+        if dest_reg and dest_reg != ctx.registrable:
+            ctx.add("external_redirect", "External redirect target",
+                    f"Parameter '{key}' redirects to '{dest_reg}', a different domain.", "medium")
+            ctx.rec("Redirect parameters pointing to external domains may chain you to a malicious site.")
             break
 
 
-# ---------------------------------------------------------------------------
-# Score → level
-# ---------------------------------------------------------------------------
-
-def _score_to_level(score: int) -> str:
-    if score <= 0:  return "safe"
-    if score < 20:  return "low"
-    if score < 45:  return "medium"
-    if score < 70:  return "high"
-    return "critical"
+def _check_hyphens(ctx: _Ctx) -> None:
+    reg_label = ctx.ext.domain or ""
+    if reg_label.count("-") >= 3:
+        ctx.add("hyphen_heavy", "Hyphen-heavy registrable domain",
+                f"Registrable domain '{ctx.registrable}' has {reg_label.count('-')} hyphens.", "medium")
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
+def _check_double_slash(ctx: _Ctx) -> None:
+    if "//" in ctx.parsed.path:
+        ctx.add("double_slash_path", "Double slash in path",
+                "Double slashes in the URL path can confuse parsers.", "low")
+
+
+def _check_entropy(ctx: _Ctx) -> None:
+    for label in ctx.parsed.host_ascii.split("."):
+        if len(label) < 12:
+            continue
+        freq: dict[str, int] = {}
+        for ch in label:
+            freq[ch] = freq.get(ch, 0) + 1
+        entropy = -sum((c / len(label)) * math.log2(c / len(label)) for c in freq.values())
+        if entropy > 3.5:
+            ctx.add("high_entropy_label", "High-entropy domain label",
+                    f"Label '{label}' looks randomly generated (entropy {entropy:.1f}).", "low")
+            break
+
+
+def _apply_escalation_floors(ctx: _Ctx, raw_score: int) -> int:
+    ids = ctx._ids
+    score = raw_score
+    if "deceptive_userinfo" in ids:
+        score = max(score, 55)
+    if "obfuscated_ip" in ids:
+        score = max(score, 55)
+    brand_hit = ids & {"brand_impersonation", "typosquat", "homograph"}
+    kw_hit = ids & {"credential_kw_host", "credential_kw_path", "multiple_kw"}
+    if brand_hit and kw_hit:
+        score = max(score, 60)
+    return score
+
 
 def analyse_url(raw_url: str) -> tuple[str, int, str, list[Indicator], list[str]]:
     """
-    Analyse *raw_url* deterministically.
-
+    Analyse *raw_url* deterministically. No network I/O.
     Returns (normalized_url, risk_score, risk_level, indicators, recommendations).
-    No network calls are made. The URL is never stored here — persistence is
-    handled by the API layer.
+    Raises ValueError for no-host URLs (caller maps to HTTP 422).
     """
-    ctx = _Ctx(raw_url=raw_url)
+    parsed = parse_url(raw_url)
+    ext = _TLD(parsed.host_ascii)
+    ctx = _Ctx(parsed=parsed, ext=ext)
 
+    _check_control_backslash(ctx)
     _check_scheme(ctx)
     _check_length(ctx)
     _check_ip_host(ctx)
+    _check_userinfo(ctx)
     _check_subdomains(ctx)
-    _check_brand_impersonation(ctx)
-    _check_suspicious_keywords(ctx)
+    _check_brand(ctx)
+    _check_keywords(ctx)
     _check_tld(ctx)
     _check_encoding(ctx)
-    _check_suspicious_chars(ctx)
-    _check_redirect_indicators(ctx)
+    _check_port(ctx)
+    _check_shortener(ctx)
+    _check_redirect(ctx)
+    _check_hyphens(ctx)
+    _check_double_slash(ctx)
+    _check_entropy(ctx)
 
-    score = max(0, min(100, ctx.score))
+    raw_score = _noisy_or(ctx._weights)
+    score = _apply_escalation_floors(ctx, raw_score)
+    score = max(0, min(100, score))
     level = _score_to_level(score)
 
-    # Default recommendation for all scans
-    if not ctx.recommendations:
-        ctx.rec("Always verify the domain matches the expected website before entering credentials.")
+    ctx.indicators.sort(key=lambda i: (_SEV_ORDER.get(i.severity, 9), -(i.weight or 0)))
 
-    return ctx.normalized, score, level, ctx.indicators, ctx.recommendations
+    if not ctx.recommendations:
+        ctx.rec("Always verify the registrable domain matches the expected website before entering credentials.")
+
+    return _normalize_for_display(parsed), score, level, ctx.indicators, ctx.recommendations
