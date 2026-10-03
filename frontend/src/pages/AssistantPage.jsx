@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { assistant } from '../services/api'
+import FaqPanel from '../components/FaqPanel'
 import './AssistantPage.css'
 
 // ---------------------------------------------------------------------------
@@ -257,111 +258,117 @@ export default function AssistantPage() {
   const canSend = input.trim().length > 0 && !loading
 
   return (
-    <div className="chat-page">
-      {/* Header */}
-      <div className="chat-header">
-        <h2 className="chat-heading">AI Security Assistant</h2>
-        <p className="chat-sub">
-          Ask cybersecurity questions or get explanations for your scan results.
-        </p>
-        <p className="chat-caveat">
-          Advisory only — cannot access external systems or execute actions.
-          AI responses may contain errors; always verify important information.
-        </p>
-      </div>
+    <div className="assistant-layout">
+      {/* ── Main chat column ── */}
+      <div className="chat-page">
+        {/* Header */}
+        <div className="chat-header">
+          <h2 className="chat-heading">AI Security Assistant</h2>
+          <p className="chat-sub">
+            Ask cybersecurity questions or get explanations for your scan results.
+          </p>
+          <p className="chat-caveat">
+            Advisory only — cannot access external systems or execute actions.
+            AI responses may contain errors; always verify important information.
+          </p>
+        </div>
 
-      {/* Message list */}
-      <div
-        className="chat-messages"
-        role="list"
-        aria-label="Conversation"
-        aria-live="polite"
-      >
-        {messages.length === 0 && !loading ? (
-          /* Empty state with suggestions */
-          <div className="chat-empty">
-            <span className="chat-empty-icon">🤖</span>
-            <p className="chat-empty-title">AEGIS Security Assistant</p>
-            <p className="chat-empty-desc">
-              Ask about cybersecurity concepts, threats, best practices, or
-              paste in the details of a scan result to get an explanation.
-            </p>
-            <div className="chat-suggestions">
-              {SUGGESTIONS.map((s, i) => (
-                <button
-                  key={i}
-                  className="chat-suggestion"
-                  type="button"
-                  onClick={() => sendMessage(s)}
-                >
-                  {s}
-                </button>
-              ))}
+        {/* Message list */}
+        <div
+          className="chat-messages"
+          role="list"
+          aria-label="Conversation"
+          aria-live="polite"
+        >
+          {messages.length === 0 && !loading ? (
+            /* Empty state with suggestions */
+            <div className="chat-empty">
+              <span className="chat-empty-icon">🤖</span>
+              <p className="chat-empty-title">AEGIS Security Assistant</p>
+              <p className="chat-empty-desc">
+                Ask about cybersecurity concepts, threats, best practices, or
+                paste in the details of a scan result to get an explanation.
+              </p>
+              <div className="chat-suggestions">
+                {SUGGESTIONS.map((s, i) => (
+                  <button
+                    key={i}
+                    className="chat-suggestion"
+                    type="button"
+                    onClick={() => sendMessage(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
+          ) : (
+            <>
+              {messages.map(msg => (
+                <MessageBubble key={msg.id} msg={msg} onFollowUp={handleFollowUp} />
+              ))}
+              {loading && <TypingIndicator />}
+            </>
+          )}
+          <div ref={bottomRef} aria-hidden="true" />
+        </div>
+
+        {/* Banners */}
+        {banner && (
+          <div className={`chat-banner chat-banner--${banner.type}`} role="alert">
+            <span>{banner.text}</span>
+            {banner.retryable && lastMsg && !loading && (
+              <button
+                type="button"
+                className="chat-banner-retry"
+                onClick={handleRetry}
+              >
+                Retry
+              </button>
+            )}
           </div>
-        ) : (
-          <>
-            {messages.map(msg => (
-              <MessageBubble key={msg.id} msg={msg} onFollowUp={handleFollowUp} />
-            ))}
-            {loading && <TypingIndicator />}
-          </>
         )}
-        <div ref={bottomRef} aria-hidden="true" />
+
+        {/* Input area */}
+        <form className="chat-input-area" onSubmit={handleSubmit}>
+          <div className="chat-input-row">
+            <textarea
+              ref={inputRef}
+              className="chat-input"
+              value={input}
+              onChange={e => { setInput(e.target.value); setBanner(null) }}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask a cybersecurity question…"
+              rows={1}
+              aria-label="Message input"
+              disabled={loading}
+              spellCheck={true}
+              autoFocus
+            />
+            <button
+              className="chat-send-btn"
+              type="submit"
+              disabled={!canSend}
+              aria-label="Send message"
+            >
+              {loading ? '…' : 'Send'}
+            </button>
+          </div>
+          <div className="chat-input-footer">
+            <span className="chat-input-hint">
+              Enter to send · Shift+Enter for new line
+            </span>
+            {messages.length > 0 && (
+              <button type="button" className="chat-clear-btn" onClick={handleClear}>
+                Clear conversation
+              </button>
+            )}
+          </div>
+        </form>
       </div>
 
-      {/* Banners */}
-      {banner && (
-        <div className={`chat-banner chat-banner--${banner.type}`} role="alert">
-          <span>{banner.text}</span>
-          {banner.retryable && lastMsg && !loading && (
-            <button
-              type="button"
-              className="chat-banner-retry"
-              onClick={handleRetry}
-            >
-              Retry
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Input area */}
-      <form className="chat-input-area" onSubmit={handleSubmit}>
-        <div className="chat-input-row">
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            value={input}
-            onChange={e => { setInput(e.target.value); setBanner(null) }}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask a cybersecurity question…"
-            rows={1}
-            aria-label="Message input"
-            disabled={loading}
-            spellCheck={true}
-            autoFocus
-          />
-          <button
-            className="chat-send-btn"
-            type="submit"
-            disabled={!canSend}
-            aria-label="Send message"
-          >
-            {loading ? '…' : 'Send'}
-          </button>
-        </div>
-        <div className="chat-input-footer">
-          <span className="chat-input-hint">
-            Enter to send · Shift+Enter for new line
-          </span>
-          {messages.length > 0 && (
-            <button type="button" className="chat-clear-btn" onClick={handleClear}>
-              Clear conversation
-            </button>
-          )}
-        </div>
-      </form>
+      {/* ── FAQ sidebar ── */}
+      <FaqPanel />
     </div>
   )
 }
