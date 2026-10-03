@@ -32,3 +32,5 @@ htmlcov/
 # Local database and logs
 *.log
 *.sqlite3
+.python-version
+uv.lock
