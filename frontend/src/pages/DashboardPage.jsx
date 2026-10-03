@@ -204,25 +204,38 @@ export default function DashboardPage() {
           ) : !summary?.recent_scans?.length ? (
             <p className="dashboard-empty-hint">No scans yet. Try analyzing a URL or email.</p>
           ) : (
-            <ul className="scan-list">
-              {summary.recent_scans.map((scan) => {
-                const sev = SEVERITY_MAP[scan.risk_level] ?? 'info'
-                return (
-                  <li key={scan.id} className="scan-item">
-                    <span className={`scan-badge scan-badge--${sev}`}>
-                      {TYPE_LABEL[scan.scan_type] ?? scan.scan_type}
-                    </span>
-                    <span className="scan-target" title={scan.target}>
-                      {scan.target}
-                    </span>
-                    <span className={`scan-result scan-result--${sev}`}>
-                      {RISK_LABEL[scan.risk_level] ?? scan.risk_level}
-                    </span>
-                    <span className="scan-time">{timeAgo(scan.scanned_at)}</span>
-                  </li>
-                )
-              })}
-            </ul>
+            <>
+              {summary.scans_by_type && (
+                <div className="scan-type-counts">
+                  {Object.entries(summary.scans_by_type)
+                    .filter(([, n]) => n > 0)
+                    .map(([type, n]) => (
+                      <span key={type} className="scan-type-pill">
+                        {TYPE_LABEL[type] ?? type}: {n}
+                      </span>
+                    ))}
+                </div>
+              )}
+              <ul className="scan-list">
+                {summary.recent_scans.map((scan) => {
+                  const sev = SEVERITY_MAP[scan.risk_level] ?? 'info'
+                  return (
+                    <li key={scan.id} className="scan-item">
+                      <span className={`scan-badge scan-badge--${sev}`}>
+                        {TYPE_LABEL[scan.scan_type] ?? scan.scan_type}
+                      </span>
+                      <span className="scan-target" title={scan.target}>
+                        {scan.target}
+                      </span>
+                      <span className={`scan-result scan-result--${sev}`}>
+                        {RISK_LABEL[scan.risk_level] ?? scan.risk_level}
+                      </span>
+                      <span className="scan-time">{timeAgo(scan.scanned_at)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
           )}
         </DashboardCard>
       </section>

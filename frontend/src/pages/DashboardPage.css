@@ -224,3 +224,21 @@
   font-style: italic;
   padding: 8px 0;
 }
+
+/* ---- Scan-type summary pills above the recent scans list ---- */
+.scan-type-counts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.scan-type-pill {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+}

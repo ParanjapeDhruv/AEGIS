@@ -47,8 +47,9 @@ class ThreatStats(BaseModel):
 class DashboardSummary(BaseModel):
     threat_stats: ThreatStats
     recent_scans: list[RecentScanItem]
-    # Separate week count for the "recent scans" card subtitle
     scans_this_week: int
+    # Per scan-type totals for the recent scans section
+    scans_by_type: dict[str, int]
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +123,20 @@ def get_dashboard_summary(
         for s in recent_rows
     ]
 
+    # --- Per-type scan counts ---
+    type_counts: dict[str, int] = {t.value: 0 for t in ScanType}
+    type_rows = (
+        db.query(Scan.scan_type, func.count(Scan.id))
+        .filter(Scan.user_id == uid)
+        .group_by(Scan.scan_type)
+        .all()
+    )
+    for scan_type, count in type_rows:
+        type_counts[scan_type.value] = count
+
     return DashboardSummary(
         threat_stats=threat_stats,
         recent_scans=recent_scans,
         scans_this_week=scans_this_week,
+        scans_by_type=type_counts,
     )
