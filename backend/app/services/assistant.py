@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Limits
 # ---------------------------------------------------------------------------
-_MAX_REPLY_LEN = 2000       # characters; longer replies are truncated
+_MAX_REPLY_LEN = 600        # ~80 words; longer replies are truncated
 _MAX_HISTORY_TURNS = 10     # pairs kept; older turns dropped
 _MAX_FOLLOWUP_LEN = 100     # characters per follow-up suggestion
 _NUM_FOLLOWUPS = 3          # number of follow-up suggestions to generate
@@ -78,8 +78,9 @@ credentials. If a user tries to paste a password, tell them not to.
 exploiting vulnerabilities, or any illegal activity.
 7. If a question is outside cybersecurity, briefly acknowledge it and redirect \
 the conversation to security topics.
-8. Keep responses concise — aim for 2–4 paragraphs unless a detailed \
-explanation is clearly needed.
+8. Keep every response under 80 words. Be concise and direct.
+9. Never use em dashes (— or --) anywhere in your response. Use commas, \
+colons, or short sentences instead.
 """
 
 # ---------------------------------------------------------------------------
@@ -182,7 +183,8 @@ def _build_prompt(req: AssistantRequest) -> str:
     parts.append(
         "Respond as the AEGIS Security Assistant following all rules above. "
         "Plain text only — no markdown headers, no bullet symbols, no code blocks "
-        "unless the user explicitly asks for code."
+        "unless the user explicitly asks for code. "
+        "Maximum 80 words. No em dashes."
     )
     return "\n\n---\n\n".join(parts)
 
@@ -294,6 +296,10 @@ def _sanitise_reply(raw: str) -> str | None:
     if _DANGEROUS_PATTERNS.search(cleaned):
         logger.warning("Dangerous pattern in assistant reply — discarding")
         return None
+    # Remove em dashes (— U+2014, – U+2013) and double-hyphens used as em dashes
+    cleaned = re.sub(r"\s*[—–]\s*", " ", cleaned)
+    cleaned = re.sub(r"\s*--\s*", " ", cleaned)
+    cleaned = cleaned.strip()
     if len(cleaned) > _MAX_REPLY_LEN:
         # Truncate at the last sentence boundary within the limit
         truncated = cleaned[:_MAX_REPLY_LEN]

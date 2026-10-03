@@ -212,10 +212,19 @@ class TestSanitiseReply:
         assert _sanitise_reply("click <script>alert(1)</script>") is None
 
     def test_truncates_very_long_reply(self):
-        long_reply = "This is a sentence. " * 200   # >> 2000 chars
+        long_reply = "This is a sentence. " * 200   # >> 600 chars
         result = _sanitise_reply(long_reply)
         assert result is not None
-        assert len(result) <= 2100  # truncation + suffix
+        assert len(result) <= 700  # truncation + suffix
+
+    def test_strips_em_dashes(self):
+        result = _sanitise_reply("Use this tool — it helps. Also this–and that.")
+        assert "—" not in result
+        assert "–" not in result
+
+    def test_strips_double_hyphen_em_dash(self):
+        result = _sanitise_reply("A good tip -- always verify links.")
+        assert "--" not in result
 
 
 # ===========================================================================
