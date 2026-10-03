@@ -67,8 +67,9 @@ export const password = {
 // -- AI Assistant ----------------------------------------------------------
 // message: string, history: [{role, content}], scan_context: optional
 export const assistant = {
-  chat: (message, history, scan_context = null) =>
+  chat:   (message, history, scan_context = null) =>
     request('POST', '/v1/assistant/chat', { message, history, scan_context }, true),
+  status: () => request('GET', '/v1/assistant/status', undefined, true),
 }
 
 // -- AI Explain ------------------------------------------------------------

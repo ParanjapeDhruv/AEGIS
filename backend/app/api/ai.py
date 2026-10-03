@@ -109,7 +109,7 @@ def explain(
         return _fallback(payload)
 
     prompt = build_prompt(payload)
-    raw_response = gemini_svc.generate(prompt)
+    raw_response, _err = gemini_svc.generate(prompt)
 
     if raw_response is None:
         return _fallback(payload)

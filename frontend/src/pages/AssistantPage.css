@@ -315,3 +315,26 @@
   border-color: var(--danger);
   color: var(--danger);
 }
+
+/* Retry button inside banner */
+.chat-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.chat-banner-retry {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+.chat-banner-retry:hover { opacity: 1; }

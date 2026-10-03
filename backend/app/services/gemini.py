@@ -6,12 +6,13 @@ Design constraints:
 - Raw passwords are NEVER sent to Gemini.
 - Gemini output is ALWAYS treated as untrusted generated content.
 - The API key is read from the environment; it is never logged or exposed.
-- Every call has a hard timeout; failures are caught and return None.
+- Every call has a hard timeout; failures are caught and returned as typed errors.
 """
 from __future__ import annotations
 
 import logging
 import threading
+from enum import Enum
 from typing import Any
 
 from backend.app.core.config import settings
@@ -28,6 +29,18 @@ _client_error: str = ""      # set if init failed, prevents repeated retries
 _MODEL = "gemini-3.8-flash"  # fast, low-latency model suitable for explanations
 _TIMEOUT_SECONDS = 15        # hard wall-clock timeout per request
 _MAX_OUTPUT_TOKENS = 600     # cap to keep responses focused
+
+
+# ---------------------------------------------------------------------------
+# Typed error codes — callers use these to give specific user messages
+# ---------------------------------------------------------------------------
+
+class GeminiError(str, Enum):
+    NOT_CONFIGURED = "not_configured"   # API key missing or placeholder
+    INIT_FAILED    = "init_failed"      # SDK init raised an exception
+    TIMEOUT        = "timeout"          # thread hit _TIMEOUT_SECONDS
+    API_ERROR      = "api_error"        # Gemini API returned an error
+    EMPTY_RESPONSE = "empty_response"   # call succeeded but text was blank
 
 
 def _get_client() -> Any | None:
@@ -97,17 +110,29 @@ def is_available() -> bool:
     return _get_client() is not None
 
 
-def generate(prompt: str) -> str | None:
-    """
-    Send *prompt* to Gemini and return the text response.
+def last_error() -> GeminiError | None:
+    """Return the error that prevented client initialisation, or None if OK."""
+    if _client is not None:
+        return None
+    if _client_error == "GEMINI_API_KEY is not configured":
+        return GeminiError.NOT_CONFIGURED
+    if _client_error:
+        return GeminiError.INIT_FAILED
+    return None
 
-    Returns None on any error (timeout, API error, missing key, etc.).
-    The caller must treat a None result gracefully — it means AI explanation
-    is unavailable for this request, not that the security analysis failed.
+
+def generate(prompt: str) -> tuple[str | None, GeminiError | None]:
+    """
+    Send *prompt* to Gemini and return (text, None) on success, or
+    (None, GeminiError) on any failure.
+
+    The caller must handle both outcomes gracefully — a non-None error
+    means AI explanation is unavailable for this request, not that the
+    security analysis failed.
     """
     client = _get_client()
     if client is None:
-        return None
+        return None, last_error() or GeminiError.NOT_CONFIGURED
 
     result: list[str | None] = [None]
     exc_box: list[Exception | None] = [None]
@@ -134,15 +159,15 @@ def generate(prompt: str) -> str | None:
 
     if thread.is_alive():
         logger.warning("Gemini request timed out after %ss", _TIMEOUT_SECONDS)
-        return None
+        return None, GeminiError.TIMEOUT
 
     if exc_box[0] is not None:
         logger.warning("Gemini request failed: %s", exc_box[0])
-        return None
+        return None, GeminiError.API_ERROR
 
     raw = result[0]
     if not raw or not raw.strip():
         logger.warning("Gemini returned empty response")
-        return None
+        return None, GeminiError.EMPTY_RESPONSE
 
-    return raw.strip()
+    return raw.strip(), None

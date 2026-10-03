@@ -26,6 +26,7 @@ from backend.app.schemas.assistant import (
     ScanContext,
 )
 from backend.app.services import gemini as gemini_svc
+from backend.app.services.gemini import GeminiError
 
 logger = logging.getLogger(__name__)
 
@@ -80,24 +81,42 @@ explanation is clearly needed.
 """
 
 # ---------------------------------------------------------------------------
-# Fallback replies
+# Fallback replies — specific to each failure mode
 # ---------------------------------------------------------------------------
-_FALLBACK_UNAVAILABLE = (
-    "The AI assistant is temporarily unavailable — the Gemini API key is not "
-    "configured or the service could not be reached. "
-    "Your security scan results above were produced by the deterministic "
-    "heuristic engine and are accurate regardless of AI availability."
-)
-
-_FALLBACK_TIMEOUT = (
-    "The AI assistant did not respond in time. This is usually a temporary "
-    "network issue. Please try again in a moment."
-)
-
-_FALLBACK_INVALID = (
-    "The AI assistant returned an unusable response. Please try rephrasing "
-    "your question."
-)
+_FALLBACK: dict[str, tuple[str, str]] = {
+    # (reply shown to user, error code for the response)
+    "not_configured": (
+        "The AI assistant is not available because the Gemini API key has not "
+        "been configured. Your scan results are produced by the deterministic "
+        "heuristic engine and are fully accurate without AI.",
+        "AI service not configured",
+    ),
+    "init_failed": (
+        "The AI assistant could not start due to a configuration error. "
+        "Please contact your administrator.",
+        "AI service initialisation failed",
+    ),
+    "timeout": (
+        "The AI assistant did not respond in time. This is usually a temporary "
+        "network issue. Please try your question again in a moment.",
+        "AI service timeout",
+    ),
+    "api_error": (
+        "The AI assistant encountered an error communicating with the Gemini API. "
+        "This may be a temporary outage. Please try again shortly.",
+        "AI service API error",
+    ),
+    "empty_response": (
+        "The AI assistant returned an empty response. "
+        "Please try rephrasing your question.",
+        "AI service returned empty response",
+    ),
+    "invalid_response": (
+        "The AI assistant returned an unusable response. "
+        "Please try rephrasing your question.",
+        "Invalid response from AI service",
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +216,11 @@ def _sanitise_reply(raw: str) -> str | None:
     return cleaned
 
 
+def _make_fallback(key: str) -> AssistantResponse:
+    reply, error = _FALLBACK.get(key, _FALLBACK["api_error"])
+    return AssistantResponse(reply=reply, ai_available=False, error=error)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -207,34 +231,22 @@ def chat(req: AssistantRequest) -> AssistantResponse:
 
     Returns AssistantResponse with ai_available=False on any failure —
     the caller should surface the error message to the user gracefully.
+    The error field on the response contains a machine-readable error code.
     """
     if not gemini_svc.is_available():
-        logger.info("Assistant: Gemini unavailable")
-        return AssistantResponse(
-            reply=_FALLBACK_UNAVAILABLE,
-            ai_available=False,
-            error="AI service not configured",
-        )
+        err = gemini_svc.last_error()
+        key = err.value if err else "not_configured"
+        logger.info("Assistant: Gemini unavailable (%s)", key)
+        return _make_fallback(key)
 
     prompt = _build_prompt(req)
-    raw = gemini_svc.generate(prompt)
+    raw, err = gemini_svc.generate(prompt)
 
-    if raw is None:
-        # generate() already logged the specific error (timeout vs API failure)
-        # Distinguish timeout from other failures via the gemini module's log,
-        # but present a generic safe message to the user either way.
-        return AssistantResponse(
-            reply=_FALLBACK_TIMEOUT,
-            ai_available=False,
-            error="AI service timeout or unavailable",
-        )
+    if err is not None:
+        return _make_fallback(err.value)
 
     reply = _sanitise_reply(raw)
     if reply is None:
-        return AssistantResponse(
-            reply=_FALLBACK_INVALID,
-            ai_available=False,
-            error="Invalid response from AI service",
-        )
+        return _make_fallback("invalid_response")
 
     return AssistantResponse(reply=reply, ai_available=True)

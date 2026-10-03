@@ -3,8 +3,22 @@ import { assistant } from '../services/api'
 import './AssistantPage.css'
 
 // ---------------------------------------------------------------------------
-// Suggested starter questions shown when the chat is empty
+// Error code → user-friendly message mapping
 // ---------------------------------------------------------------------------
+const ERROR_MESSAGES = {
+  not_configured: 'AI assistant is not configured (API key missing). Scan results still work normally.',
+  init_failed:    'AI assistant failed to initialise. Please contact your administrator.',
+  timeout:        'AI assistant timed out. Please try again — this is usually temporary.',
+  api_error:      'AI service returned an error. Please wait a moment and try again.',
+  empty_response: 'AI returned an empty response. Try rephrasing your question.',
+}
+
+function errorMessage(code) {
+  return ERROR_MESSAGES[code] ?? 'AI assistant is temporarily unavailable.'
+}
+
+// Transient errors that make sense to retry
+const RETRYABLE = new Set(['timeout', 'api_error', 'empty_response'])
 const SUGGESTIONS = [
   'What is phishing and how do I spot it?',
   'Why is a long password better than a complex short one?',
@@ -92,9 +106,26 @@ export default function AssistantPage() {
   const [messages,  setMessages]  = useState([])
   const [input,     setInput]     = useState('')
   const [loading,   setLoading]   = useState(false)
-  const [banner,    setBanner]    = useState(null)  // { type, text }
+  const [banner,    setBanner]    = useState(null)  // { type, text, retryMsg? }
+  const [lastMsg,   setLastMsg]   = useState(null)  // for retry
   const bottomRef   = useRef(null)
   const inputRef    = useRef(null)
+
+  // Check AI availability on mount — show upfront banner if not ready
+  useEffect(() => {
+    assistant.status()
+      .then(data => {
+        if (!data.available) {
+          setBanner({
+            type: 'warn',
+            text: errorMessage(data.error_code),
+          })
+        }
+      })
+      .catch(() => {
+        // Status check failed (network error, auth error) — don't block UI
+      })
+  }, [])
 
   // Auto-scroll to bottom whenever messages change
   useEffect(() => {
@@ -111,13 +142,13 @@ export default function AssistantPage() {
     if (!trimmed || loading) return
 
     setBanner(null)
+    setLastMsg(trimmed)
     const userMsg = makeUserMsg(trimmed)
     setMessages(prev => [...prev, userMsg])
     setInput('')
     setLoading(true)
 
     try {
-      // Build history from current messages before adding this turn
       const history = buildHistory(messages)
       const data = await assistant.chat(trimmed, history, null)
 
@@ -126,34 +157,53 @@ export default function AssistantPage() {
         makeAssistantMsg(data.reply, data.ai_available, data.error ?? null),
       ])
 
-      // Surface a non-blocking warning banner if AI was unavailable
+      // Surface a non-blocking warning for fallback responses
       if (!data.ai_available) {
+        const code = data.error ?? ''
+        const isRetryable = RETRYABLE.has(code)
         setBanner({
           type: 'warn',
-          text: 'AI service is currently unavailable. Showing a basic response.',
+          text: errorMessage(code),
+          retryable: isRetryable,
         })
       }
     } catch (err) {
       const msg = err.message ?? 'Something went wrong.'
-      // 429 rate limit — show as banner, not as a message
       if (msg.includes('rate limit') || msg.includes('429')) {
-        setBanner({ type: 'error', text: msg })
+        // Rate limit — banner only, the user message stays visible
+        setBanner({
+          type: 'error',
+          text: 'Rate limit reached. Please wait a moment before sending another message.',
+          retryable: false,
+        })
+      } else if (msg.includes('Session expired')) {
+        // Auth error handled by api.js redirect — nothing extra needed
       } else {
-        setMessages(prev => [
-          ...prev,
-          makeAssistantMsg(
-            'The assistant encountered an error. Please try again.',
-            false,
-            msg,
-          ),
-        ])
+        // Network or unexpected error — inline message with retry option
+        setBanner({
+          type: 'error',
+          text: `Request failed: ${msg}`,
+          retryable: true,
+        })
       }
     } finally {
       setLoading(false)
-      // Return focus to input
       setTimeout(() => inputRef.current?.focus(), 50)
     }
   }, [loading, messages, buildHistory])
+
+  function handleRetry() {
+    if (!lastMsg) return
+    // Remove the last user message so it doesn't duplicate on retry
+    setMessages(prev => {
+      const idx = [...prev].reverse().findIndex(m => m.role === 'user')
+      if (idx === -1) return prev
+      const realIdx = prev.length - 1 - idx
+      return prev.slice(0, realIdx)
+    })
+    setBanner(null)
+    sendMessage(lastMsg)
+  }
 
   function handleSubmit(e) {
     e.preventDefault()
@@ -234,7 +284,16 @@ export default function AssistantPage() {
       {/* Banners */}
       {banner && (
         <div className={`chat-banner chat-banner--${banner.type}`} role="alert">
-          {banner.text}
+          <span>{banner.text}</span>
+          {banner.retryable && lastMsg && !loading && (
+            <button
+              type="button"
+              className="chat-banner-retry"
+              onClick={handleRetry}
+            >
+              Retry
+            </button>
+          )}
         </div>
       )}
 

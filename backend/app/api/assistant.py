@@ -19,6 +19,7 @@ from backend.app.api.deps import get_current_user
 from backend.app.models.user import User
 from backend.app.schemas.assistant import AssistantRequest, AssistantResponse
 from backend.app.services.assistant import chat
+from backend.app.services import gemini as gemini_svc
 
 router = APIRouter(prefix="/v1/assistant", tags=["assistant"])
 
@@ -47,6 +48,26 @@ def _check_rate_limit(user_id: int) -> None:
             )
         timestamps.append(now)
         _rate_store[user_id] = timestamps
+
+
+@router.get(
+    "/status",
+    status_code=status.HTTP_200_OK,
+    summary="Check AI assistant availability",
+)
+def assistant_status(
+    _current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Returns whether the AI assistant is available.
+    The Gemini API key itself is never included in the response.
+    """
+    available = gemini_svc.is_available()
+    err = gemini_svc.last_error()
+    return {
+        "available": available,
+        "error_code": err.value if err else None,
+    }
 
 
 @router.post(
