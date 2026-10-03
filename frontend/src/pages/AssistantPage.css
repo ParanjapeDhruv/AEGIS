@@ -1,11 +1,65 @@
-/* AI Security Assistant page */
+/* =========================================================
+   AI Security Assistant — two-column layout
+   ========================================================= */
 
+/*
+ * Outer wrapper: chat column (flex-grow) + FAQ sidebar (fixed width).
+ * Height is constrained to the visible viewport minus header + page padding
+ * so both panels can scroll independently without the page itself scrolling.
+ */
+.assistant-layout {
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
+  height: calc(100vh - var(--header-height) - 48px);
+  min-height: 0; /* required for nested flex scroll */
+  width: 100%;
+  align-items: stretch;
+}
+
+/* ---- Main chat column ---- */
 .chat-page {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - var(--header-height) - 48px);
-  max-width: 780px;
+  flex: 1 1 0;
+  min-width: 0; /* prevent flex blowout */
+  height: 100%;
   gap: 0;
+}
+
+/* ---- FAQ panel height matching (handled in FaqPanel.css via flex on .faq-panel) ---- */
+/* The panel is already flex; assistant-layout stretches it to full column height. */
+
+/* =========================================================
+   Responsive — collapse FAQ below 900 px
+   ========================================================= */
+@media (max-width: 900px) {
+  .assistant-layout {
+    flex-direction: column;
+    height: auto; /* let content flow naturally in stacked mode */
+  }
+
+  /* Chat takes its natural height on small screens */
+  .chat-page {
+    height: calc(100vh - var(--header-height) - 48px);
+    flex: none;
+  }
+
+  /* FAQ panel: fixed height drawer below the chat */
+  .assistant-layout > aside {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: 260px;
+    border-radius: var(--radius);
+  }
+}
+
+@media (max-width: 600px) {
+  /* On very small screens collapse the FAQ panel further */
+  .assistant-layout > aside {
+    height: 200px;
+  }
 }
 
 /* ---- Header ---- */

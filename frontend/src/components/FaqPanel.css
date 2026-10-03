@@ -9,6 +9,9 @@
   min-width: 260px;
   max-width: 320px;
   flex-shrink: 0;
+  /* Fill the full column height set by assistant-layout */
+  height: 100%;
+  min-height: 0; /* required for inner flex scroll */
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);

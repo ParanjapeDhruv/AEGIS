@@ -15,4 +15,7 @@
   margin-top: var(--header-height);
   padding: 24px;
   flex: 1;
+  min-height: 0; /* allow flex children to control their own scroll */
+  display: flex;
+  flex-direction: column;
 }
