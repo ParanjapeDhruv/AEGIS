@@ -1,0 +1,239 @@
+.url-page {
+  max-width: 740px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.url-heading {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.url-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* Form */
+.url-form {
+  display: flex;
+  gap: 12px;
+}
+
+.url-input {
+  flex: 1;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: monospace;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.url-input:focus { border-color: var(--accent); }
+.url-input::placeholder { color: var(--text-muted); font-family: inherit; }
+
+.url-btn {
+  background: var(--accent);
+  color: #000;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 22px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.url-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.url-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+.url-error {
+  background: #f851491a;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+/* Result */
+.url-result {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.url-result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-left: 4px solid;
+}
+
+.url-result-left {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.url-risk-level {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.url-risk-score {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.url-scan-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.url-scan-id {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.url-scan-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.url-bar-track {
+  height: 4px;
+  background: var(--bg-elevated);
+}
+
+.url-bar-fill {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+
+/* Normalized URL */
+.url-normalized {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.url-normalized-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.url-normalized-value {
+  font-size: 12px;
+  font-family: monospace;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+/* Sections */
+.url-section {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.url-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--warning);
+}
+
+.url-section-title--info { color: var(--info); }
+
+/* Indicators */
+.url-indicators {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.url-indicator {
+  background: var(--bg-elevated);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.url-indicator-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.url-indicator-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+}
+
+.url-indicator-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.url-indicator-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Recommendations */
+.url-recs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 4px;
+}
+
+.url-recs li {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding-left: 16px;
+  position: relative;
+}
+
+.url-recs li::before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: var(--info);
+}
+
+.url-all-good {
+  font-size: 14px;
+  color: var(--success);
+  font-weight: 500;
+  padding: 16px 20px;
+}

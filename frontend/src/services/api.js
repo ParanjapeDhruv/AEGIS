@@ -50,7 +50,7 @@ export const dashboard = {
 
 // -- URL Analysis ----------------------------------------------------------
 export const urlAnalysis = {
-  analyze: (url) => request('POST', '/url-analysis', { url }),
+  analyze: (url) => request('POST', '/v1/analysis/url', { url }, true),
 }
 
 // -- Phishing --------------------------------------------------------------
