@@ -209,6 +209,8 @@ export default function AssistantPage() {
             ),
           ])
         }, 0)
+        // Clear any existing banner — the footer already shows the limit note
+        setBanner(null)
       }
 
       // Surface a non-blocking warning for fallback responses,
@@ -344,8 +346,8 @@ export default function AssistantPage() {
           <div ref={bottomRef} aria-hidden="true" />
         </div>
 
-        {/* Banners */}
-        {banner && (
+        {/* Banners — hidden once limit is reached; footer handles that state */}
+        {banner && !isLimitReached && (
           <div className={`chat-banner chat-banner--${banner.type}`} role="alert">
             <span>{banner.text}</span>
             {banner.retryable && lastMsg && !loading && (
