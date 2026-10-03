@@ -127,7 +127,7 @@ export default function UrlAnalysisPage() {
           {/* Indicators — sorted by severity then weight */}
           {result.indicators.length > 0 ? (
             <div className="url-section">
-              <h3 className="url-section-title">⚠️ Detected Indicators</h3>
+              <h3 className="url-section-title">Detected Indicators</h3>
               <div className="url-indicators">
                 {result.indicators.map((ind, i) => (
                   <div key={i} className="url-indicator">
@@ -161,7 +161,7 @@ export default function UrlAnalysisPage() {
           {/* Recommendations */}
           {result.recommendations.length > 0 && (
             <div className="url-section">
-              <h3 className="url-section-title url-section-title--info">💡 Recommendations</h3>
+              <h3 className="url-section-title url-section-title--info">Recommendations</h3>
               <ul className="url-recs">
                 {result.recommendations.map((r, i) => <li key={i}>{r}</li>)}
               </ul>

@@ -168,7 +168,7 @@ export default function FaqPanel() {
     <aside className="faq-panel" aria-label="Frequently asked questions">
       <div className="faq-panel-header">
         <h2 className="faq-panel-title">
-          <span aria-hidden="true">📖</span> FAQ
+          FAQ
         </h2>
         <p className="faq-panel-sub">Common cybersecurity questions</p>
       </div>

@@ -244,7 +244,7 @@ export default function PhishingPage() {
           {/* Indicators */}
           {result.indicators.length > 0 ? (
             <div className="ph-section">
-              <h3 className="ph-section-title">⚠️ Detected Indicators</h3>
+              <h3 className="ph-section-title">Detected Indicators</h3>
               <div className="ph-indicators">
                 {result.indicators.map((ind, i) => (
                   <div key={i} className="ph-indicator">
@@ -274,7 +274,7 @@ export default function PhishingPage() {
           {/* Recommendations */}
           {result.recommendations.length > 0 && (
             <div className="ph-section">
-              <h3 className="ph-section-title ph-section-title--info">💡 Recommendations</h3>
+              <h3 className="ph-section-title ph-section-title--info">Recommendations</h3>
               <ul className="ph-recs">
                 {result.recommendations.map((r, i) => <li key={i}>{r}</li>)}
               </ul>

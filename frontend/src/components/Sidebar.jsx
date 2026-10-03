@@ -2,14 +2,14 @@ import { NavLink } from 'react-router-dom'
 import './Sidebar.css'
 
 const NAV_ITEMS = [
-  { path: '/',          label: 'Dashboard',         icon: '⬡' },
-  { path: '/url',       label: 'URL Analysis',       icon: '🔗' },
-  { path: '/phishing',  label: 'Phishing Email',     icon: '🎣' },
-  { path: '/password',  label: 'Password Analysis',  icon: '🔒' },
-  { path: '/assistant', label: 'AI Assistant',        icon: '🤖' },
-  { path: '/history',   label: 'Scan History',       icon: '📋' },
-  { path: '/reports',   label: 'Reports',            icon: '📊' },
-  { path: '/profile',   label: 'Profile',            icon: '👤' },
+  { path: '/',          label: 'Dashboard',         icon: '◆' },
+  { path: '/url',       label: 'URL Analysis',       icon: '◆' },
+  { path: '/phishing',  label: 'Phishing Email',     icon: '◆' },
+  { path: '/password',  label: 'Password Analysis',  icon: '◆' },
+  { path: '/assistant', label: 'AI Assistant',        icon: '◆' },
+  { path: '/history',   label: 'Scan History',       icon: '◆' },
+  { path: '/reports',   label: 'Reports',            icon: '◆' },
+  { path: '/profile',   label: 'Profile',            icon: '◆' },
 ]
 
 export default function Sidebar() {

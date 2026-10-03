@@ -65,7 +65,7 @@ export default function PasswordPage() {
             onClick={() => setShow(s => !s)}
             aria-label={show ? 'Hide password' : 'Show password'}
           >
-            {show ? '🙈' : '👁️'}
+            {show ? 'Hide' : 'Show'}
           </button>
         </div>
         <button className="pw-btn" type="submit" disabled={loading || !pwd}>
@@ -105,7 +105,7 @@ export default function PasswordPage() {
           {/* Weaknesses */}
           {result.weaknesses.length > 0 && (
             <div className="pw-section">
-              <h3 className="pw-section-title pw-section-title--danger">⚠️ Weaknesses</h3>
+              <h3 className="pw-section-title pw-section-title--danger">Weaknesses</h3>
               <ul className="pw-list pw-list--danger">
                 {result.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
               </ul>
@@ -115,7 +115,7 @@ export default function PasswordPage() {
           {/* Recommendations */}
           {result.recommendations.length > 0 && (
             <div className="pw-section">
-              <h3 className="pw-section-title pw-section-title--info">💡 Recommendations</h3>
+              <h3 className="pw-section-title pw-section-title--info">Recommendations</h3>
               <ul className="pw-list pw-list--info">
                 {result.recommendations.map((r, i) => <li key={i}>{r}</li>)}
               </ul>
@@ -123,7 +123,7 @@ export default function PasswordPage() {
           )}
 
           {result.weaknesses.length === 0 && result.recommendations.length === 0 && (
-            <p className="pw-all-good">✅ No issues detected. Excellent password!</p>
+            <p className="pw-all-good">No issues detected. Excellent password!</p>
           )}
         </div>
       )}

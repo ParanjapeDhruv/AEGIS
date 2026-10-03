@@ -74,7 +74,7 @@ function MessageBubble({ msg, onFollowUp }) {
       role="listitem"
     >
       <div className="chat-avatar" aria-hidden="true">
-        {isUser ? '👤' : '🤖'}
+        {isUser ? 'U' : 'AI'}
       </div>
       <div className="chat-msg-body">
         <p className="chat-msg-text">{msg.content}</p>
@@ -113,7 +113,7 @@ function MessageBubble({ msg, onFollowUp }) {
 function TypingIndicator() {
   return (
     <div className="chat-typing" role="status" aria-label="Assistant is typing">
-      <div className="chat-avatar" aria-hidden="true">🤖</div>
+      <div className="chat-avatar" aria-hidden="true">AI</div>
       <div className="chat-typing-dots" aria-hidden="true">
         <span /><span /><span />
       </div>
@@ -319,7 +319,7 @@ export default function AssistantPage() {
           {messages.length === 0 && !loading ? (
             /* Empty state with suggestions */
             <div className="chat-empty">
-              <span className="chat-empty-icon">🤖</span>
+              <span className="chat-empty-icon">AI</span>
               <p className="chat-empty-title">AEGIS Security Assistant</p>
               <p className="chat-empty-desc">
                 Ask about cybersecurity concepts, threats, best practices, or

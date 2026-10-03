@@ -150,7 +150,7 @@ export default function DashboardPage() {
           title="Security Score"
           value={loading ? '…' : score !== null ? `${score}/100` : 'N/A'}
           subtitle={loading ? 'Loading…' : `Status: ${label}`}
-          icon="🛡️"
+          icon="◆"
           accent={loading ? 'default' : accent}
         />
 
@@ -158,7 +158,7 @@ export default function DashboardPage() {
           title="Total Scans"
           value={loading ? '…' : total}
           subtitle={loading ? 'Loading…' : weekCount > 0 ? `+${weekCount} this week` : 'No scans this week'}
-          icon="🔍"
+          icon="◆"
           accent="info"
         />
 
@@ -169,7 +169,7 @@ export default function DashboardPage() {
             loading ? 'Loading…'
             : `${stats?.critical ?? 0} critical · ${stats?.high ?? 0} high`
           }
-          icon="⚠️"
+          icon="◆"
           accent={!loading && ((stats?.critical ?? 0) + (stats?.high ?? 0)) > 0 ? 'danger' : 'warning'}
         />
 
@@ -180,7 +180,7 @@ export default function DashboardPage() {
             loading ? 'Loading…'
             : `${stats?.medium ?? 0} medium · ${stats?.low ?? 0} low`
           }
-          icon="🔶"
+          icon="◆"
           accent={!loading && (stats?.medium ?? 0) > 0 ? 'warning' : 'default'}
         />
 
@@ -188,7 +188,7 @@ export default function DashboardPage() {
           title="Safe Results"
           value={loading ? '…' : stats?.safe ?? 0}
           subtitle={loading ? 'Loading…' : 'No threats detected'}
-          icon="✅"
+          icon="◆"
           accent="success"
         />
       </section>
@@ -196,7 +196,7 @@ export default function DashboardPage() {
       {/* Error banner */}
       {apiError && !loading && (
         <div className="dashboard-error" role="alert">
-          <span>⚠️ {apiError}</span>
+          <span>{apiError}</span>
           <button className="dashboard-error-retry" onClick={handleRetry}>
             Retry
           </button>
@@ -206,7 +206,7 @@ export default function DashboardPage() {
       {/* Threat breakdown + recent scans */}
       <section className="dashboard-grid">
         {/* Threat summary card */}
-        <DashboardCard title="Threat Summary" icon="📊">
+        <DashboardCard title="Threat Summary" icon="◆">
           {loading ? (
             <div className="dashboard-skeleton-rows">
               {[1,2,3,4].map(i => <div key={i} className="dashboard-skeleton-row" />)}
@@ -225,7 +225,7 @@ export default function DashboardPage() {
         </DashboardCard>
 
         {/* Recent scans card */}
-        <DashboardCard title="Recent Scans" icon="🕒">
+        <DashboardCard title="Recent Scans" icon="◆">
           {loading ? (
             <div className="dashboard-skeleton-rows">
               {[1,2,3,4,5].map(i => <div key={i} className="dashboard-skeleton-row" />)}

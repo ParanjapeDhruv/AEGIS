@@ -60,7 +60,7 @@ export default function AiExplanation({ fetchFn, resetKey }) {
         onClick={handleToggle}
         aria-expanded={open}
       >
-        <span className="ai-trigger-icon">🤖</span>
+        <span className="ai-trigger-icon">AI</span>
         <span className="ai-trigger-label">Explain with AI</span>
         {statusLabel && (
           <span className="ai-trigger-status">{statusLabel}</span>
