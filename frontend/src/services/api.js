@@ -45,7 +45,7 @@ export const auth = {
 
 // -- Dashboard -------------------------------------------------------------
 export const dashboard = {
-  getSummary: () => request('GET', '/dashboard/summary'),
+  getSummary: () => request('GET', '/v1/dashboard/summary', undefined, true),
 }
 
 // -- URL Analysis ----------------------------------------------------------
@@ -54,8 +54,9 @@ export const urlAnalysis = {
 }
 
 // -- Phishing --------------------------------------------------------------
+// data: { sender, reply_to, subject, body, links, attachment_names }
 export const phishing = {
-  analyze: (emailText) => request('POST', '/phishing', { email_text: emailText }),
+  analyze: (data) => request('POST', '/v1/analysis/email', data, true),
 }
 
 // -- Password --------------------------------------------------------------
@@ -64,9 +65,18 @@ export const password = {
 }
 
 // -- AI Assistant ----------------------------------------------------------
+// message: string, history: [{role, content}], scan_context: optional
 export const assistant = {
-  chat:    (message, history) => request('POST', '/assistant/chat', { message, history }),
-  history: ()                 => request('GET',  '/assistant/history'),
+  chat:   (message, history, scan_context = null) =>
+    request('POST', '/v1/assistant/chat', { message, history, scan_context }, true),
+  status: () => request('GET', '/v1/assistant/status', undefined, true),
+}
+
+// -- AI Explain ------------------------------------------------------------
+// evidence: { scan_type, risk_score, risk_level, indicators, context_fields }
+// Raw passwords and full email bodies are NEVER included in evidence.
+export const ai = {
+  explain: (evidence) => request('POST', '/v1/ai/explain', evidence, true),
 }
 
 // -- Scan History ----------------------------------------------------------

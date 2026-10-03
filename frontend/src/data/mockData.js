@@ -31,8 +31,8 @@ export const mockRecentScans = [
 ]
 
 export const mockQuickActions = [
-  { id: 'url',       label: 'Analyze URL',        icon: '🔗', path: '/url',       description: 'Check if a URL is safe' },
-  { id: 'phishing',  label: 'Check Email',         icon: '🎣', path: '/phishing',  description: 'Detect phishing attempts' },
-  { id: 'password',  label: 'Test Password',       icon: '🔒', path: '/password',  description: 'Evaluate password strength' },
-  { id: 'assistant', label: 'Ask AI Assistant',    icon: '🤖', path: '/assistant', description: 'Get security advice' },
+  { id: 'url',       label: 'Analyze URL',        icon: '◆', path: '/url',       description: 'Check if a URL is safe' },
+  { id: 'phishing',  label: 'Check Email',         icon: '◆', path: '/phishing',  description: 'Detect phishing attempts' },
+  { id: 'password',  label: 'Test Password',       icon: '◆', path: '/password',  description: 'Evaluate password strength' },
+  { id: 'assistant', label: 'Ask AI Assistant',    icon: '◆', path: '/assistant', description: 'Get security advice' },
 ]

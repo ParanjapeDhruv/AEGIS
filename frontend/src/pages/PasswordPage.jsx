@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { password as passwordApi } from '../services/api'
+import { password as passwordApi, ai } from '../services/api'
+import AiExplanation from '../components/AiExplanation'
 import './PasswordPage.css'
 
 const LEVEL_META = {
@@ -64,7 +65,7 @@ export default function PasswordPage() {
             onClick={() => setShow(s => !s)}
             aria-label={show ? 'Hide password' : 'Show password'}
           >
-            {show ? '🙈' : '👁️'}
+            {show ? 'Hide' : 'Show'}
           </button>
         </div>
         <button className="pw-btn" type="submit" disabled={loading || !pwd}>
@@ -104,7 +105,7 @@ export default function PasswordPage() {
           {/* Weaknesses */}
           {result.weaknesses.length > 0 && (
             <div className="pw-section">
-              <h3 className="pw-section-title pw-section-title--danger">⚠️ Weaknesses</h3>
+              <h3 className="pw-section-title pw-section-title--danger">Weaknesses</h3>
               <ul className="pw-list pw-list--danger">
                 {result.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
               </ul>
@@ -114,7 +115,7 @@ export default function PasswordPage() {
           {/* Recommendations */}
           {result.recommendations.length > 0 && (
             <div className="pw-section">
-              <h3 className="pw-section-title pw-section-title--info">💡 Recommendations</h3>
+              <h3 className="pw-section-title pw-section-title--info">Recommendations</h3>
               <ul className="pw-list pw-list--info">
                 {result.recommendations.map((r, i) => <li key={i}>{r}</li>)}
               </ul>
@@ -122,9 +123,35 @@ export default function PasswordPage() {
           )}
 
           {result.weaknesses.length === 0 && result.recommendations.length === 0 && (
-            <p className="pw-all-good">✅ No issues detected. Excellent password!</p>
+            <p className="pw-all-good">No issues detected. Excellent password!</p>
           )}
         </div>
+      )}
+
+      {/* AI explanation — entropy/length/weaknesses only, password never sent */}
+      {result && (
+        <AiExplanation
+          resetKey={result.score + '_' + result.entropy_bits}
+          fetchFn={() => ai.explain({
+            scan_type:  'password',
+            risk_score: result.score,
+            risk_level: result.level === 'very_weak'   ? 'critical'
+                      : result.level === 'weak'        ? 'high'
+                      : result.level === 'moderate'    ? 'medium'
+                      : result.level === 'strong'      ? 'low'
+                      : 'safe',
+            indicators: result.weaknesses.map((w, i) => ({
+              id:       `weakness_${i}`,
+              name:     w,
+              detail:   w,
+              severity: i === 0 ? 'high' : 'medium',
+            })),
+            context_fields: {
+              entropy_bits: String(result.entropy_bits),
+              length:       String(result.character_stats.length),
+            },
+          })}
+        />
       )}
     </div>
   )

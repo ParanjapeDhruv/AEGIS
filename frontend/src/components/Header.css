@@ -37,7 +37,7 @@
   border-radius: 50%;
 }
 
-.status-dot--online { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.status-dot--online { background: var(--success); }
 .status-dot--offline { background: var(--danger); }
 
 .status-label {
