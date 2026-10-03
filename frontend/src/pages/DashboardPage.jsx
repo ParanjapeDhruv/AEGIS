@@ -136,14 +136,25 @@ export default function DashboardPage() {
         />
 
         <DashboardCard
-          title="Active Threats"
-          value={loading ? '…' : (stats?.high ?? 0) + (stats?.critical ?? 0)}
+          title="High Risk"
+          value={loading ? '…' : (stats?.critical ?? 0) + (stats?.high ?? 0)}
           subtitle={
             loading ? 'Loading…'
             : `${stats?.critical ?? 0} critical · ${stats?.high ?? 0} high`
           }
           icon="⚠️"
           accent={!loading && ((stats?.critical ?? 0) + (stats?.high ?? 0)) > 0 ? 'danger' : 'warning'}
+        />
+
+        <DashboardCard
+          title="Medium / Low"
+          value={loading ? '…' : (stats?.medium ?? 0) + (stats?.low ?? 0)}
+          subtitle={
+            loading ? 'Loading…'
+            : `${stats?.medium ?? 0} medium · ${stats?.low ?? 0} low`
+          }
+          icon="🔶"
+          accent={!loading && (stats?.medium ?? 0) > 0 ? 'warning' : 'default'}
         />
 
         <DashboardCard
