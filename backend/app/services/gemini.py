@@ -26,9 +26,9 @@ _client_lock = threading.Lock()
 _client: Any = None          # google.genai.Client once initialised
 _client_error: str = ""      # set if init failed, prevents repeated retries
 
-_MODEL = "gemini-3.8-flash"  # fast, low-latency model suitable for explanations
-_TIMEOUT_SECONDS = 15        # hard wall-clock timeout per request
-_MAX_OUTPUT_TOKENS = 600     # cap to keep responses focused
+_MODEL = "gemini-2.5-flash"  # fast, low-latency model suitable for explanations
+_TIMEOUT_SECONDS = 20        # hard wall-clock timeout per request
+_MAX_OUTPUT_TOKENS = 1024    # cap to keep responses focused but not truncated
 
 
 # ---------------------------------------------------------------------------

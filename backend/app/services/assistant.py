@@ -239,18 +239,6 @@ def _infer_topic(text: str) -> str:
     return "general"
 
 
-def _build_followup_prompt(user_message: str, assistant_reply: str) -> str:
-    return (
-        "You are a cybersecurity assistant generating follow-up questions.\n\n"
-        f"User asked: {user_message[:300]}\n\n"
-        f"You replied: {assistant_reply[:500]}\n\n"
-        f"Generate exactly {_NUM_FOLLOWUPS} short, distinct follow-up questions "
-        "the user might want to ask next, in the context of cybersecurity. "
-        "Output ONLY the questions, one per line, no numbering, no bullet points, "
-        "no extra text. Each question must be under 100 characters."
-    )
-
-
 def _parse_followups(raw: str) -> list[str]:
     """Extract clean follow-up questions from raw Gemini output."""
     lines = [
@@ -273,31 +261,19 @@ def _parse_followups(raw: str) -> list[str]:
 
 def _generate_followups(user_message: str, assistant_reply: str) -> list[str]:
     """
-    Generate context-relevant follow-up suggestions.
-    Falls back to a curated pool if AI is unavailable or returns junk.
+    Generate context-relevant follow-up suggestions from the curated topic pool.
+
+    We intentionally do NOT make a second Gemini API call here — doing so
+    would double the rate-limit exposure per user turn and introduce a second
+    failure point that could cascade into an api_error on the next main call.
+    The curated pool is topic-inferred and already high-quality.
     """
     import random
 
-    suggestions: list[str] = []
-
-    if gemini_svc.is_available():
-        prompt = _build_followup_prompt(user_message, assistant_reply)
-        raw, err = gemini_svc.generate(prompt)
-        if err is None and raw:
-            suggestions = _parse_followups(raw)
-
-    # Fallback or top-up with pool entries if AI gave too few
-    if len(suggestions) < _NUM_FOLLOWUPS:
-        topic = _infer_topic(user_message + " " + assistant_reply)
-        pool = _FOLLOWUP_FALLBACKS[topic].copy()
-        random.shuffle(pool)
-        for candidate in pool:
-            if candidate not in suggestions:
-                suggestions.append(candidate)
-            if len(suggestions) >= _NUM_FOLLOWUPS:
-                break
-
-    return suggestions[:_NUM_FOLLOWUPS]
+    topic = _infer_topic(user_message + " " + assistant_reply)
+    pool = _FOLLOWUP_FALLBACKS[topic].copy()
+    random.shuffle(pool)
+    return pool[:_NUM_FOLLOWUPS]
 
 
 # ---------------------------------------------------------------------------

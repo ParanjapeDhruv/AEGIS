@@ -133,59 +133,46 @@ class TestParseFollowups:
 # ===========================================================================
 
 class TestGenerateFollowups:
-    def test_uses_gemini_output_when_available(self):
-        mock_questions = (
-            "How do I verify an email sender?\n"
-            "What should I do after clicking a bad link?\n"
-            "Can attackers fake the From address?"
-        )
-        with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
-            mock_svc.is_available.return_value = True
-            mock_svc.generate.return_value = (mock_questions, None)
-            result = _generate_followups("phishing email question", "assistant reply")
+    def test_returns_three_suggestions(self):
+        result = _generate_followups("phishing email question", "assistant reply")
+        assert len(result) == 3
+
+    def test_all_suggestions_are_questions(self):
+        result = _generate_followups("what is phishing?", "phishing is...")
+        assert all("?" in q for q in result)
+
+    def test_topic_url_pool_selected(self):
+        result = _generate_followups("is this url safe?", "reply about url scanning")
         assert len(result) == 3
         assert all("?" in q for q in result)
 
-    def test_falls_back_when_gemini_unavailable(self):
-        with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
-            mock_svc.is_available.return_value = False
-            result = _generate_followups("phishing email", "some reply")
+    def test_topic_password_pool_selected(self):
+        result = _generate_followups("password entropy", "reply about passwords")
         assert len(result) == 3
+        assert all("?" in q for q in result)
 
-    def test_falls_back_when_gemini_errors(self):
-        with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
-            mock_svc.is_available.return_value = True
-            mock_svc.generate.return_value = ("", MagicMock())  # error object
-            result = _generate_followups("password strength", "some reply")
-        assert len(result) == 3
-
-    def test_tops_up_if_gemini_returns_too_few(self):
-        # Gemini returns only 1 valid question
-        with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
-            mock_svc.is_available.return_value = True
-            mock_svc.generate.return_value = ("How do I spot phishing?\nNot a question.", None)
-            result = _generate_followups("phishing", "reply about phishing")
+    def test_topic_general_pool_selected(self):
+        result = _generate_followups("what is 2fa?", "two factor authentication is...")
         assert len(result) == 3
 
     def test_returns_at_most_num_followups(self):
-        many_qs = "\n".join(f"How do I check thing {i}?" for i in range(20))
-        with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
-            mock_svc.is_available.return_value = True
-            mock_svc.generate.return_value = (many_qs, None)
-            result = _generate_followups("question", "reply")
+        result = _generate_followups("question", "reply")
         assert len(result) <= 3
 
-    def test_fallback_pool_topic_url(self):
+    def test_no_gemini_call_made(self):
+        """Follow-up generation must not call Gemini — avoids double rate-limit."""
         with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
-            mock_svc.is_available.return_value = False
-            result = _generate_followups("is this url safe?", "reply about url")
-        # Should draw from URL pool — all should contain "?"
+            mock_svc.is_available.return_value = True
+            result = _generate_followups("phishing email", "some reply")
+            mock_svc.generate.assert_not_called()
+        assert len(result) == 3
+
+    def test_fallback_pool_topic_url(self):
+        result = _generate_followups("is this url safe?", "reply about url")
         assert all("?" in q for q in result)
 
     def test_fallback_pool_topic_password(self):
-        with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
-            mock_svc.is_available.return_value = False
-            result = _generate_followups("password entropy", "reply about passwords")
+        result = _generate_followups("password entropy", "reply about passwords")
         assert len(result) == 3
         assert all("?" in q for q in result)
 
@@ -287,18 +274,9 @@ class TestChatEndToEnd:
 
     def test_follow_up_suggestions_included_in_response(self):
         main_reply = "Phishing is a social engineering attack."
-        followup_raw = (
-            "How do I verify an email sender?\n"
-            "What should I do after clicking a bad link?\n"
-            "Can attackers fake the From address?"
-        )
         with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
             mock_svc.is_available.return_value = True
-            # First call = main reply, second call = follow-up suggestions
-            mock_svc.generate.side_effect = [
-                (main_reply, None),
-                (followup_raw, None),
-            ]
+            mock_svc.generate.return_value = (main_reply, None)
             resp = chat(self._make_req())
         assert len(resp.follow_up_suggestions) == 3
         assert all("?" in q for q in resp.follow_up_suggestions)
@@ -355,15 +333,22 @@ class TestChatEndToEnd:
         assert "high" in prompt
         assert "suspicious_tld" in prompt
 
-    def test_follow_ups_fallback_when_second_gemini_call_fails(self):
-        """If the follow-up Gemini call errors, pool fallback fills the gaps."""
+    def test_follow_ups_do_not_make_second_gemini_call(self):
+        """Ensure follow-up generation never makes a second Gemini call."""
         main_reply = "Phishing uses fake emails to steal credentials."
+        call_count = 0
+
+        def counting_generate(prompt):
+            nonlocal call_count
+            call_count += 1
+            return (main_reply, None)
+
         with patch("backend.app.services.assistant.gemini_svc") as mock_svc:
             mock_svc.is_available.return_value = True
-            mock_svc.generate.side_effect = [
-                (main_reply, None),          # main reply succeeds
-                ("", MagicMock()),           # follow-up call returns error
-            ]
+            mock_svc.generate.side_effect = counting_generate
             resp = chat(self._make_req("phishing email question"))
-        # Should still get 3 suggestions from the fallback pool
+
+        # Only the one main reply call — no second call for follow-ups
+        assert call_count == 1
+        assert resp.ai_available is True
         assert len(resp.follow_up_suggestions) == 3
