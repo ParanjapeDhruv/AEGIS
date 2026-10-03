@@ -20,6 +20,7 @@ function errorMessage(code) {
 
 // Transient errors that make sense to retry
 const RETRYABLE = new Set(['timeout', 'api_error', 'empty_response'])
+const MAX_QUESTIONS = 6
 const SUGGESTIONS = [
   'What is phishing and how do I spot it?',
   'Why is a long password better than a complex short one?',
@@ -161,6 +162,10 @@ export default function AssistantPage() {
     const trimmed = text.trim()
     if (!trimmed || loading) return
 
+    // Count how many questions the user has already asked
+    const questionCount = messages.filter(m => m.role === 'user').length
+    if (questionCount >= MAX_QUESTIONS) return  // already at limit; input is disabled
+
     setBanner(null)
     setLastMsg(trimmed)
     const userMsg = makeUserMsg(trimmed)
@@ -172,15 +177,31 @@ export default function AssistantPage() {
       const history = buildHistory(messages)
       const data = await assistant.chat(trimmed, history, null)
 
-      setMessages(prev => [
-        ...prev,
-        makeAssistantMsg(
-          data.reply,
-          data.ai_available,
-          data.error ?? null,
-          data.follow_up_suggestions ?? [],
-        ),
-      ])
+      const isLastQuestion = questionCount + 1 >= MAX_QUESTIONS
+
+      setMessages(prev => {
+        const next = [
+          ...prev,
+          makeAssistantMsg(
+            data.reply,
+            data.ai_available,
+            data.error ?? null,
+            // Don't show follow-up chips on the final answer — input is closing
+            isLastQuestion ? [] : (data.follow_up_suggestions ?? []),
+          ),
+        ]
+        // After the final answer, append the session-limit notice as an assistant message
+        if (isLastQuestion) {
+          next.push(makeAssistantMsg(
+            "You've reached the 6-question limit for this session. " +
+            "Refresh the page to start a new conversation.",
+            true,
+            null,
+            [],
+          ))
+        }
+        return next
+      })
 
       // Surface a non-blocking warning for fallback responses
       if (!data.ai_available) {
@@ -195,7 +216,6 @@ export default function AssistantPage() {
     } catch (err) {
       const msg = err.message ?? 'Something went wrong.'
       if (msg.includes('rate limit') || msg.includes('429')) {
-        // Rate limit — banner only, the user message stays visible
         setBanner({
           type: 'error',
           text: 'Rate limit reached. Please wait a moment before sending another message.',
@@ -204,7 +224,6 @@ export default function AssistantPage() {
       } else if (msg.includes('Session expired')) {
         // Auth error handled by api.js redirect — nothing extra needed
       } else {
-        // Network or unexpected error — inline message with retry option
         setBanner({
           type: 'error',
           text: `Request failed: ${msg}`,
@@ -255,7 +274,9 @@ export default function AssistantPage() {
     inputRef.current?.focus()
   }
 
-  const canSend = input.trim().length > 0 && !loading
+  const questionCount = messages.filter(m => m.role === 'user').length
+  const isLimitReached = questionCount >= MAX_QUESTIONS
+  const canSend = input.trim().length > 0 && !loading && !isLimitReached
 
   return (
     <div className="assistant-layout">
@@ -334,14 +355,14 @@ export default function AssistantPage() {
           <div className="chat-input-row">
             <textarea
               ref={inputRef}
-              className="chat-input"
-              value={input}
-              onChange={e => { setInput(e.target.value); setBanner(null) }}
+              className={`chat-input${isLimitReached ? ' chat-input--locked' : ''}`}
+              value={isLimitReached ? '' : input}
+              onChange={e => { if (!isLimitReached) { setInput(e.target.value); setBanner(null) } }}
               onKeyDown={handleKeyDown}
-              placeholder="Ask a cybersecurity question…"
+              placeholder={isLimitReached ? 'Session limit reached — refresh to start over' : 'Ask a cybersecurity question…'}
               rows={1}
               aria-label="Message input"
-              disabled={loading}
+              disabled={loading || isLimitReached}
               spellCheck={true}
               autoFocus
             />
@@ -355,14 +376,31 @@ export default function AssistantPage() {
             </button>
           </div>
           <div className="chat-input-footer">
-            <span className="chat-input-hint">
-              Enter to send · Shift+Enter for new line
-            </span>
-            {messages.length > 0 && (
-              <button type="button" className="chat-clear-btn" onClick={handleClear}>
-                Clear conversation
-              </button>
+            {isLimitReached ? (
+              <span className="chat-limit-note">
+                Session limit reached ({MAX_QUESTIONS}/{MAX_QUESTIONS} questions)
+              </span>
+            ) : (
+              <span className="chat-input-hint">
+                Enter to send · Shift+Enter for new line
+              </span>
             )}
+            <div className="chat-input-footer-right">
+              {!isLimitReached && messages.length > 0 && (
+                <button type="button" className="chat-clear-btn" onClick={handleClear}>
+                  Clear conversation
+                </button>
+              )}
+              {isLimitReached && (
+                <button
+                  type="button"
+                  className="chat-refresh-btn"
+                  onClick={() => window.location.reload()}
+                >
+                  Refresh page
+                </button>
+              )}
+            </div>
           </div>
         </form>
       </div>
