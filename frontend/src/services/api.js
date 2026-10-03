@@ -45,7 +45,7 @@ export const auth = {
 
 // -- Dashboard -------------------------------------------------------------
 export const dashboard = {
-  getSummary: () => request('GET', '/dashboard/summary'),
+  getSummary: () => request('GET', '/v1/dashboard/summary', undefined, true),
 }
 
 // -- URL Analysis ----------------------------------------------------------
