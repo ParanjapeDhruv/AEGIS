@@ -36,11 +36,12 @@ _MAX_OUTPUT_TOKENS = 1024    # cap to keep responses focused but not truncated
 # ---------------------------------------------------------------------------
 
 class GeminiError(str, Enum):
-    NOT_CONFIGURED = "not_configured"   # API key missing or placeholder
-    INIT_FAILED    = "init_failed"      # SDK init raised an exception
-    TIMEOUT        = "timeout"          # thread hit _TIMEOUT_SECONDS
-    API_ERROR      = "api_error"        # Gemini API returned an error
-    EMPTY_RESPONSE = "empty_response"   # call succeeded but text was blank
+    NOT_CONFIGURED   = "not_configured"    # API key missing or placeholder
+    INIT_FAILED      = "init_failed"       # SDK init raised an exception
+    TIMEOUT          = "timeout"           # thread hit _TIMEOUT_SECONDS
+    API_ERROR        = "api_error"         # Gemini API returned an error
+    QUOTA_EXHAUSTED  = "quota_exhausted"   # 429 daily/per-minute quota hit
+    EMPTY_RESPONSE   = "empty_response"    # call succeeded but text was blank
 
 
 def _get_client() -> Any | None:
@@ -134,9 +135,8 @@ def generate(prompt: str) -> tuple[str | None, GeminiError | None]:
     if client is None:
         return None, last_error() or GeminiError.NOT_CONFIGURED
 
-    # Retry once on 503 UNAVAILABLE (transient demand spike)
-    _MAX_RETRIES = 2
-    for attempt in range(_MAX_RETRIES):
+    def _attempt() -> tuple[str | None, Exception | None, bool]:
+        """Run one Gemini call in a thread. Returns (text, exc, timed_out)."""
         result: list[str | None] = [None]
         exc_box: list[Exception | None] = [None]
 
@@ -159,27 +159,36 @@ def generate(prompt: str) -> tuple[str | None, GeminiError | None]:
         thread = threading.Thread(target=_call, daemon=True)
         thread.start()
         thread.join(timeout=_TIMEOUT_SECONDS)
+        timed_out = thread.is_alive()
+        return result[0], exc_box[0], timed_out
 
-        if thread.is_alive():
+    # Try up to 2 times — retry only on 503 transient overload
+    for attempt in range(2):
+        text, exc, timed_out = _attempt()
+
+        if timed_out:
             logger.warning("Gemini request timed out after %ss", _TIMEOUT_SECONDS)
             return None, GeminiError.TIMEOUT
 
-        if exc_box[0] is not None:
-            err_str = str(exc_box[0])
-            # Retry once on 503 UNAVAILABLE (transient high-demand spike)
-            if "503" in err_str and attempt < _MAX_RETRIES - 1:
-                logger.warning("Gemini 503 on attempt %d, retrying…", attempt + 1)
+        if exc is not None:
+            err_str = str(exc)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                logger.warning("Gemini quota exhausted: %s", exc)
+                return None, GeminiError.QUOTA_EXHAUSTED
+            if "503" in err_str and attempt == 0:
+                logger.warning("Gemini 503 on attempt 1, retrying in 2s…")
                 import time as _time
                 _time.sleep(2)
                 continue
-            logger.warning("Gemini request failed: %s", exc_box[0])
+            logger.warning("Gemini request failed: %s", exc)
             return None, GeminiError.API_ERROR
 
-        break  # success — exit retry loop
+        # No exception — check for empty response
+        if not text or not text.strip():
+            logger.warning("Gemini returned empty response")
+            return None, GeminiError.EMPTY_RESPONSE
 
-    raw = result[0]
-    if not raw or not raw.strip():
-        logger.warning("Gemini returned empty response")
-        return None, GeminiError.EMPTY_RESPONSE
+        return text.strip(), None
 
-    return raw.strip(), None
+    # Should not reach here, but satisfy the type checker
+    return None, GeminiError.API_ERROR

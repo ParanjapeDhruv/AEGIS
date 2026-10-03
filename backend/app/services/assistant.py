@@ -105,9 +105,13 @@ _FALLBACK: dict[str, tuple[str, str]] = {
         "AI service timeout",
     ),
     "api_error": (
-        "The AI assistant encountered an error communicating with the Gemini API. "
-        "This may be a temporary outage. Please try again shortly.",
+        "The AI assistant is temporarily unavailable. Please try again shortly.",
         "AI service API error",
+    ),
+    "quota_exhausted": (
+        "The AI assistant has reached its daily request limit. "
+        "It will be available again in a few hours.",
+        "AI service quota exhausted",
     ),
     "empty_response": (
         "The AI assistant returned an empty response. "

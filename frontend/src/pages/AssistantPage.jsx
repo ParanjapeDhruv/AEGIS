@@ -7,19 +7,22 @@ import './AssistantPage.css'
 // Error code → user-friendly message mapping
 // ---------------------------------------------------------------------------
 const ERROR_MESSAGES = {
-  not_configured: 'AI assistant is not configured (API key missing). Scan results still work normally.',
-  init_failed:    'AI assistant failed to initialise. Please contact your administrator.',
-  timeout:        'AI assistant timed out. Please try again — this is usually temporary.',
-  api_error:      'AI service returned an error. Please wait a moment and try again.',
-  empty_response: 'AI returned an empty response. Try rephrasing your question.',
+  not_configured:  'AI assistant is not configured (API key missing). Scan results still work normally.',
+  init_failed:     'AI assistant failed to initialise. Please contact your administrator.',
+  timeout:         'AI assistant timed out. Please try again.',
+  api_error:       'AI assistant is temporarily unavailable. Please try again shortly.',
+  quota_exhausted: 'AI assistant has reached its daily limit. It will be available again in a few hours.',
+  empty_response:  'AI returned an empty response. Try rephrasing your question.',
 }
 
 function errorMessage(code) {
   return ERROR_MESSAGES[code] ?? 'AI assistant is temporarily unavailable.'
 }
 
-// Transient errors that make sense to retry
-const RETRYABLE = new Set(['timeout', 'api_error', 'empty_response'])
+// Only transient errors that make sense to show a banner + retry button for
+const RETRYABLE = new Set(['timeout'])
+// Errors shown only as inline bubble — no redundant banner
+const INLINE_ONLY = new Set(['api_error', 'quota_exhausted', 'empty_response', 'invalid_response'])
 const MAX_QUESTIONS = 6
 const SUGGESTIONS = [
   'What is phishing and how do I spot it?',
@@ -132,11 +135,12 @@ export default function AssistantPage() {
   const bottomRef   = useRef(null)
   const inputRef    = useRef(null)
 
-  // Check AI availability on mount — show upfront banner if not ready
+  // Check AI availability on mount — show upfront banner only for
+  // config/init errors; transient errors surface inline when the user sends a message
   useEffect(() => {
     assistant.status()
       .then(data => {
-        if (!data.available) {
+        if (!data.available && !INLINE_ONLY.has(data.error_code ?? '')) {
           setBanner({
             type: 'warn',
             text: errorMessage(data.error_code),
@@ -213,16 +217,15 @@ export default function AssistantPage() {
         setBanner(null)
       }
 
-      // Surface a non-blocking warning for fallback responses,
-      // but suppress it when we're on the last question — the limit
-      // notice already tells the user the session is over.
-      if (!data.ai_available && !isLastQuestion) {
+      // Surface a banner only for errors that warrant one (e.g. timeout with retry).
+      // api_error / quota_exhausted already appear as the inline assistant bubble,
+      // so skip the banner to avoid showing the same message twice.
+      if (!data.ai_available && !isLastQuestion && !INLINE_ONLY.has(data.error ?? '')) {
         const code = data.error ?? ''
-        const isRetryable = RETRYABLE.has(code)
         setBanner({
           type: 'warn',
           text: errorMessage(code),
-          retryable: isRetryable,
+          retryable: RETRYABLE.has(code),
         })
       }
     } catch (err) {
