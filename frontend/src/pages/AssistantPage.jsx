@@ -184,27 +184,37 @@ export default function AssistantPage() {
           ...prev,
           makeAssistantMsg(
             data.reply,
-            data.ai_available,
-            data.error ?? null,
-            // Don't show follow-up chips on the final answer — input is closing
+            // Force aiAvailable=true on the last reply to suppress the offline
+            // badge — the session-limit notice below already covers this state
+            isLastQuestion ? true : data.ai_available,
+            isLastQuestion ? null : (data.error ?? null),
+            // No follow-up chips on the final answer — input is closing
             isLastQuestion ? [] : (data.follow_up_suggestions ?? []),
           ),
         ]
-        // After the final answer, append the session-limit notice as an assistant message
-        if (isLastQuestion) {
-          next.push(makeAssistantMsg(
-            "You've reached the 6-question limit for this session. " +
-            "Refresh the page to start a new conversation.",
-            true,
-            null,
-            [],
-          ))
-        }
         return next
       })
 
-      // Surface a non-blocking warning for fallback responses
-      if (!data.ai_available) {
+      // After the final answer is rendered, append the session-limit notice
+      // separately so the 6th answer always appears first
+      if (isLastQuestion) {
+        setTimeout(() => {
+          setMessages(prev => [
+            ...prev,
+            makeAssistantMsg(
+              'Session limit reached. Refresh the page to start a new conversation.',
+              true,
+              null,
+              [],
+            ),
+          ])
+        }, 0)
+      }
+
+      // Surface a non-blocking warning for fallback responses,
+      // but suppress it when we're on the last question — the limit
+      // notice already tells the user the session is over.
+      if (!data.ai_available && !isLastQuestion) {
         const code = data.error ?? ''
         const isRetryable = RETRYABLE.has(code)
         setBanner({
