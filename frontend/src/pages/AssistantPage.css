@@ -338,3 +338,47 @@
   transition: opacity 0.15s;
 }
 .chat-banner-retry:hover { opacity: 1; }
+
+/* ---- Follow-up suggestion chips (appear below each assistant reply) ---- */
+.chat-followups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.chat-followups-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.chat-followups-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-followup-chip {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 5px 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  text-align: left;
+  line-height: 1.4;
+}
+.chat-followup-chip:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: var(--accent-dim);
+}
+.chat-followup-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

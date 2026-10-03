@@ -40,13 +40,14 @@ function makeUserMsg(text) {
   return { id: crypto.randomUUID(), role: 'user', content: text, time: timestamp() }
 }
 
-function makeAssistantMsg(text, aiAvailable = true, error = null) {
+function makeAssistantMsg(text, aiAvailable = true, error = null, followUps = []) {
   return {
     id: crypto.randomUUID(),
     role: 'assistant',
     content: text,
     aiAvailable,
     error,
+    followUps,
     time: timestamp(),
   }
 }
@@ -55,9 +56,10 @@ function makeAssistantMsg(text, aiAvailable = true, error = null) {
 // Message bubble
 // ---------------------------------------------------------------------------
 
-function MessageBubble({ msg }) {
+function MessageBubble({ msg, onFollowUp }) {
   const isUser = msg.role === 'user'
   const isError = msg.role === 'assistant' && !msg.aiAvailable
+  const hasFollowUps = !isUser && !isError && msg.followUps?.length > 0
 
   return (
     <div
@@ -77,6 +79,23 @@ function MessageBubble({ msg }) {
             <span className="chat-fallback-badge">offline</span>
           )}
         </span>
+        {hasFollowUps && (
+          <div className="chat-followups" role="group" aria-label="Follow-up questions">
+            <span className="chat-followups-label">You might also ask:</span>
+            <div className="chat-followups-chips">
+              {msg.followUps.map((q, i) => (
+                <button
+                  key={i}
+                  className="chat-followup-chip"
+                  type="button"
+                  onClick={() => onFollowUp(q)}
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -154,7 +173,12 @@ export default function AssistantPage() {
 
       setMessages(prev => [
         ...prev,
-        makeAssistantMsg(data.reply, data.ai_available, data.error ?? null),
+        makeAssistantMsg(
+          data.reply,
+          data.ai_available,
+          data.error ?? null,
+          data.follow_up_suggestions ?? [],
+        ),
       ])
 
       // Surface a non-blocking warning for fallback responses
@@ -191,6 +215,11 @@ export default function AssistantPage() {
       setTimeout(() => inputRef.current?.focus(), 50)
     }
   }, [loading, messages, buildHistory])
+
+  // Follow-up chip click — auto-submit the chosen question
+  function handleFollowUp(question) {
+    sendMessage(question)
+  }
 
   function handleRetry() {
     if (!lastMsg) return
@@ -273,7 +302,7 @@ export default function AssistantPage() {
         ) : (
           <>
             {messages.map(msg => (
-              <MessageBubble key={msg.id} msg={msg} />
+              <MessageBubble key={msg.id} msg={msg} onFollowUp={handleFollowUp} />
             ))}
             {loading && <TypingIndicator />}
           </>

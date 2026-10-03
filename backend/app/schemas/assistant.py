@@ -67,3 +67,8 @@ class AssistantResponse(BaseModel):
     reply: str                  # Gemini's response text (sanitised)
     ai_available: bool          # False when Gemini is unconfigured or failed
     error: str | None = None    # Set only when ai_available is False
+    follow_up_suggestions: list[str] = Field(
+        default_factory=list,
+        description="Context-relevant follow-up questions the user may want to ask next.",
+        max_length=4,
+    )

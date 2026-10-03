@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _MAX_REPLY_LEN = 2000       # characters; longer replies are truncated
 _MAX_HISTORY_TURNS = 10     # pairs kept; older turns dropped
+_MAX_FOLLOWUP_LEN = 100     # characters per follow-up suggestion
+_NUM_FOLLOWUPS = 3          # number of follow-up suggestions to generate
 
 # ---------------------------------------------------------------------------
 # Dangerous-pattern guard — same approach as ai_validator
@@ -186,6 +188,119 @@ def _build_prompt(req: AssistantRequest) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Follow-up suggestion generation
+# ---------------------------------------------------------------------------
+
+# Topic-keyed fallback pools so we always have suggestions even without AI
+_FOLLOWUP_FALLBACKS: dict[str, list[str]] = {
+    "phishing": [
+        "How can I verify if an email sender is legitimate?",
+        "What should I do after clicking a phishing link?",
+        "How do attackers spoof email addresses?",
+        "What are the most common phishing red flags?",
+        "How does DMARC protect against email spoofing?",
+    ],
+    "password": [
+        "What is the safest way to store passwords?",
+        "How long should a secure password be?",
+        "Should I use a password manager?",
+        "What makes a passphrase stronger than a password?",
+        "How do brute-force attacks work?",
+    ],
+    "url": [
+        "What makes a URL suspicious?",
+        "How do URL shorteners hide malicious links?",
+        "What is typosquatting?",
+        "How can I safely preview a suspicious link?",
+        "What does a high-risk URL score mean?",
+    ],
+    "general": [
+        "What is two-factor authentication and why should I use it?",
+        "How do I know if my accounts have been compromised?",
+        "What is the difference between a virus and malware?",
+        "How does HTTPS protect my data in transit?",
+        "What is social engineering in cybersecurity?",
+    ],
+}
+
+_FOLLOWUP_KEYWORDS: dict[str, list[str]] = {
+    "phishing": ["phish", "email", "spam", "spoof", "sender", "attachment", "link"],
+    "password": ["password", "passphrase", "entropy", "hash", "credential", "brute"],
+    "url":      ["url", "link", "domain", "website", "redirect", "scan"],
+}
+
+
+def _infer_topic(text: str) -> str:
+    """Heuristically pick a fallback topic from the message text."""
+    lower = text.lower()
+    for topic, keywords in _FOLLOWUP_KEYWORDS.items():
+        if any(kw in lower for kw in keywords):
+            return topic
+    return "general"
+
+
+def _build_followup_prompt(user_message: str, assistant_reply: str) -> str:
+    return (
+        "You are a cybersecurity assistant generating follow-up questions.\n\n"
+        f"User asked: {user_message[:300]}\n\n"
+        f"You replied: {assistant_reply[:500]}\n\n"
+        f"Generate exactly {_NUM_FOLLOWUPS} short, distinct follow-up questions "
+        "the user might want to ask next, in the context of cybersecurity. "
+        "Output ONLY the questions, one per line, no numbering, no bullet points, "
+        "no extra text. Each question must be under 100 characters."
+    )
+
+
+def _parse_followups(raw: str) -> list[str]:
+    """Extract clean follow-up questions from raw Gemini output."""
+    lines = [
+        line.strip().lstrip("•-–—0123456789.) ").strip()
+        for line in raw.splitlines()
+        if line.strip()
+    ]
+    valid: list[str] = []
+    for line in lines:
+        if (
+            5 < len(line) <= _MAX_FOLLOWUP_LEN
+            and "?" in line
+            and not _DANGEROUS_PATTERNS.search(line)
+        ):
+            valid.append(line)
+        if len(valid) >= _NUM_FOLLOWUPS:
+            break
+    return valid
+
+
+def _generate_followups(user_message: str, assistant_reply: str) -> list[str]:
+    """
+    Generate context-relevant follow-up suggestions.
+    Falls back to a curated pool if AI is unavailable or returns junk.
+    """
+    import random
+
+    suggestions: list[str] = []
+
+    if gemini_svc.is_available():
+        prompt = _build_followup_prompt(user_message, assistant_reply)
+        raw, err = gemini_svc.generate(prompt)
+        if err is None and raw:
+            suggestions = _parse_followups(raw)
+
+    # Fallback or top-up with pool entries if AI gave too few
+    if len(suggestions) < _NUM_FOLLOWUPS:
+        topic = _infer_topic(user_message + " " + assistant_reply)
+        pool = _FOLLOWUP_FALLBACKS[topic].copy()
+        random.shuffle(pool)
+        for candidate in pool:
+            if candidate not in suggestions:
+                suggestions.append(candidate)
+            if len(suggestions) >= _NUM_FOLLOWUPS:
+                break
+
+    return suggestions[:_NUM_FOLLOWUPS]
+
+
+# ---------------------------------------------------------------------------
 # Response sanitisation
 # ---------------------------------------------------------------------------
 
@@ -249,4 +364,10 @@ def chat(req: AssistantRequest) -> AssistantResponse:
     if reply is None:
         return _make_fallback("invalid_response")
 
-    return AssistantResponse(reply=reply, ai_available=True)
+    follow_ups = _generate_followups(req.message, reply)
+
+    return AssistantResponse(
+        reply=reply,
+        ai_available=True,
+        follow_up_suggestions=follow_ups,
+    )
