@@ -70,6 +70,13 @@ export const assistant = {
   history: ()                 => request('GET',  '/assistant/history'),
 }
 
+// -- AI Explain ------------------------------------------------------------
+// evidence: { scan_type, risk_score, risk_level, indicators, context_fields }
+// Raw passwords and full email bodies are NEVER included in evidence.
+export const ai = {
+  explain: (evidence) => request('POST', '/v1/ai/explain', evidence, true),
+}
+
 // -- Scan History ----------------------------------------------------------
 export const scanHistory = {
   list:      (params) => request('GET',  `/scans?${new URLSearchParams(params)}`),

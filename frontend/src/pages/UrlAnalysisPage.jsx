@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { urlAnalysis } from '../services/api'
+import { urlAnalysis, ai } from '../services/api'
+import AiExplanation from '../components/AiExplanation'
 import './UrlAnalysisPage.css'
 
 const LEVEL_META = {
@@ -173,6 +174,29 @@ export default function UrlAnalysisPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* AI explanation — shown below the result card, evidence-only */}
+      {result && (
+        <AiExplanation
+          resetKey={result.scan_id}
+          fetchFn={() => ai.explain({
+            scan_type:    'url',
+            risk_score:   result.risk_score,
+            risk_level:   result.risk_level,
+            indicators:   result.indicators.map(i => ({
+              id:       i.id,
+              name:     i.name,
+              detail:   i.detail,
+              severity: i.severity,
+            })),
+            context_fields: {
+              host: result.normalized_url
+                      ? new URL(result.normalized_url).hostname
+                      : '',
+            },
+          })}
+        />
       )}
     </div>
   )

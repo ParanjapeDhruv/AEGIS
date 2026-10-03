@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { password as passwordApi } from '../services/api'
+import { password as passwordApi, ai } from '../services/api'
+import AiExplanation from '../components/AiExplanation'
 import './PasswordPage.css'
 
 const LEVEL_META = {
@@ -125,6 +126,32 @@ export default function PasswordPage() {
             <p className="pw-all-good">✅ No issues detected. Excellent password!</p>
           )}
         </div>
+      )}
+
+      {/* AI explanation — entropy/length/weaknesses only, password never sent */}
+      {result && (
+        <AiExplanation
+          resetKey={result.score + '_' + result.entropy_bits}
+          fetchFn={() => ai.explain({
+            scan_type:  'password',
+            risk_score: result.score,
+            risk_level: result.level === 'very_weak'   ? 'critical'
+                      : result.level === 'weak'        ? 'high'
+                      : result.level === 'moderate'    ? 'medium'
+                      : result.level === 'strong'      ? 'low'
+                      : 'safe',
+            indicators: result.weaknesses.map((w, i) => ({
+              id:       `weakness_${i}`,
+              name:     w,
+              detail:   w,
+              severity: i === 0 ? 'high' : 'medium',
+            })),
+            context_fields: {
+              entropy_bits: String(result.entropy_bits),
+              length:       String(result.character_stats.length),
+            },
+          })}
+        />
       )}
     </div>
   )

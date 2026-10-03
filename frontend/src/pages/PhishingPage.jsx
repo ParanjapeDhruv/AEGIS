@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { phishing } from '../services/api'
+import { phishing, ai } from '../services/api'
+import AiExplanation from '../components/AiExplanation'
 import './PhishingPage.css'
 
 const LEVEL_META = {
@@ -286,6 +287,30 @@ export default function PhishingPage() {
             </div>
           )}
         </div>
+      )}
+
+      {/* AI explanation — subject + sender domain only, never the email body */}
+      {result && (
+        <AiExplanation
+          resetKey={result.scan_id}
+          fetchFn={() => ai.explain({
+            scan_type:    'email',
+            risk_score:   result.risk_score,
+            risk_level:   result.risk_level,
+            indicators:   result.indicators.map(i => ({
+              id:       i.id,
+              name:     i.name,
+              detail:   i.detail,
+              severity: i.severity,
+            })),
+            context_fields: {
+              subject:       form.subject.trim().slice(0, 120) || '(no subject)',
+              sender_domain: form.sender.includes('@')
+                               ? form.sender.split('@').pop().trim()
+                               : '',
+            },
+          })}
+        />
       )}
     </div>
   )

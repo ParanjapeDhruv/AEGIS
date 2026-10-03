@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.app.api.ai import router as ai_router
 from backend.app.api.auth import router as auth_router
 from backend.app.api.password import router as password_router
 from backend.app.api.phishing import router as phishing_router
@@ -40,6 +41,7 @@ app.include_router(auth_router, prefix="/api")
 app.include_router(password_router, prefix="/api")
 app.include_router(url_router, prefix="/api")
 app.include_router(phishing_router, prefix="/api")
+app.include_router(ai_router, prefix="/api")
 
 
 @app.get("/health", tags=["health"])
