@@ -1,33 +1,64 @@
-# AEGIS URL Analyser — Evaluation Report
+# AEGIS URL Analyser — Evaluation Report (v2.2-heuristic)
 
-**Phishing URLs:** 30
-**Benign URLs:**   30
+**Engine:** deterministic lexical/structural analysis, zero network I/O  
+**Date:** generated from PDB + Tranco holdout sets  
 
-> Heuristic analysis only. Scores are threshold-dependent.
-> This report was generated offline from local fixture files.
+> All numbers below are from the **holdout set** (never used for tuning).
 
-## Precision / Recall by Threshold
+---
 
-| Threshold | TP | FP | FN | TN | Precision | Recall | F1 | FPR |
-|-----------|----|----|----|----|-----------|--------|----|-----|
-|        10 | 30 |  1 |  0 | 29 |     0.968 |  1.000 | 0.984 | 0.033 |
-|        15 | 30 |  0 |  0 | 30 |     1.000 |  1.000 | 1.000 | 0.000 |
-|        20 | 30 |  0 |  0 | 30 |     1.000 |  1.000 | 1.000 | 0.000 |
-|        25 | 30 |  0 |  0 | 30 |     1.000 |  1.000 | 1.000 | 0.000 |
-|        30 | 30 |  0 |  0 | 30 |     1.000 |  1.000 | 1.000 | 0.000 |
-|        35 | 30 |  0 |  0 | 30 |     1.000 |  1.000 | 1.000 | 0.000 |
-|        40 | 30 |  0 |  0 | 30 |     1.000 |  1.000 | 1.000 | 0.000 |
-|        45 | 30 |  0 |  0 | 30 |     1.000 |  1.000 | 1.000 | 0.000 |
-|        50 | 28 |  0 |  2 | 30 |     1.000 |  0.933 | 0.966 | 0.000 |
-|        55 | 26 |  0 |  4 | 30 |     1.000 |  0.867 | 0.929 | 0.000 |
-|        60 | 26 |  0 |  4 | 30 |     1.000 |  0.867 | 0.929 | 0.000 |
-|        65 | 17 |  0 | 13 | 30 |     1.000 |  0.567 | 0.723 | 0.000 |
-|        70 | 15 |  0 | 15 | 30 |     1.000 |  0.500 | 0.667 | 0.000 |
-|        75 |  1 |  0 | 29 | 30 |     1.000 |  0.033 | 0.065 | 0.000 |
-|        80 |  0 |  0 | 30 | 30 |     0.000 |  0.000 | 0.000 | 0.000 |
-|        85 |  0 |  0 | 30 | 30 |     0.000 |  0.000 | 0.000 | 0.000 |
-|        90 |  0 |  0 | 30 | 30 |     0.000 |  0.000 | 0.000 | 0.000 |
+## Holdout Results — Easy Benign (Tranco top domains)
 
-## Top False-Positive Indicators (benign URLs scoring >= 20)
+| Phishing | Benign | Threshold | TP | FP | Precision | Recall | F1 | FPR |
+|---|---|---|---|---|---|---|---|---|
+| 1013 | 1599 | **10** | 516 | 53 | **0.907** | **0.509** | **0.652** | 0.033 |
+| 1013 | 1599 | 15 | 379 | 24 | 0.940 | 0.374 | 0.535 | 0.015 |
+| 1013 | 1599 | 20 | 281 | 18 | 0.940 | 0.277 | 0.428 | 0.011 |
 
-_None_
+## Holdout Results — Hard Benign (Tranco top domains + realistic login paths)
+
+| Phishing | Benign | Threshold | TP | FP | Precision | Recall | F1 | FPR |
+|---|---|---|---|---|---|---|---|---|
+| 1013 | 1136 | **10** | 516 | 32 | **0.942** | **0.509** | **0.661** | 0.028 |
+| 1013 | 1136 | 15 | 379 | 32 | 0.922 | 0.374 | 0.532 | 0.028 |
+| 1013 | 1136 | 20 | 281 | 16 | 0.946 | 0.277 | 0.430 | 0.014 |
+
+---
+
+## Progress Across Versions (holdout, easy benign, t=10)
+
+| Version | TP | FP | Precision | Recall | F1 |
+|---|---|---|---|---|---|
+| v2.0 (baseline) | 449 | 38 | 0.922 | 0.443 | 0.599 |
+| v2.1 (+path signals, +TLDs, OAuth FP fix) | 516 | 53 | 0.907 | 0.509 | 0.652 |
+| v2.2 (+login.php, +wp-admin, +CVV, +numeric domain, +multi-TLD, +banks) | **516** | **53** | **0.907** | **0.509** | **0.652** |
+
+---
+
+## Recall Ceiling Analysis
+
+Of the **497 missed phishing URLs** (holdout, t=10):
+
+- **~170 (34%)** score 5–9 — have weak signals (HTTP-only, light TLD). Lowering threshold to 5 would catch these but doubles FPR.
+- **~327 (66%)** score 0 — **no lexical signals at all**. These use:
+  - Normal `.com`/`.net` domains with no brand or risky TLD
+  - Clean-looking short paths or single-segment paths
+  - No encoding, no IP, no userinfo, no suspicious keywords
+
+**These cannot be caught by URL-string analysis alone.** Catching them requires domain age, WHOIS, DNS reputation, page content analysis, or ML — all of which are out of scope for this deterministic offline module.
+
+## Top False-Positive Indicators (hard benign, t=10)
+
+| Indicator | Count | Root cause |
+|---|---|---|
+| brand_impersonation | ~32 | Infrastructure domains containing brand tokens (e.g. google-analytics.com paths on non-google hosts) |
+| credential_kw_path | ~24 | Synthetic `/login`, `/account` paths on benign domains |
+
+---
+
+## Recommendation
+
+**Use threshold = 10** in production. This gives:
+- 90.7–94.2% precision (very few false alarms)
+- 50.9% recall (catches ~half of real phishing via structural signals)
+- Complement with: domain age lookup, VirusTotal integration, or ML scoring for the remaining 49%

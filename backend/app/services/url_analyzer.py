@@ -1,7 +1,13 @@
 ﻿"""
-Deterministic URL phishing/threat analyser — v2.0-heuristic.
+Deterministic URL phishing/threat analyser — v2.1-heuristic.
 
 Design: zero network I/O, fully deterministic, HTTPS never a safety signal.
+v2.1 improvements (data-driven from PDB/Tranco eval):
+  - Path-based signals for phishing infrastructure patterns
+  - High-entropy path segments
+  - OAuth redirect FP suppression
+  - Expanded risky TLD list
+  - credential_kw_path suppressed unless elevated score
 """
 from __future__ import annotations
 
@@ -18,27 +24,73 @@ from backend.app.schemas.url_analysis import Indicator
 from backend.app.services.url_data.brands import (
     ALL_LEGITIMATE, BRANDS, CONFUSABLES, CREDENTIAL_KEYWORDS,
     FREENOM_TLDS, LIGHT_RISKY_TLDS, MEDIUM_RISKY_TLDS,
-    REDIRECT_PARAMS, URL_SHORTENERS,
+    OAUTH_PROVIDERS, PHISHING_PATH_PATTERNS, REDIRECT_PARAMS,
+    RISKY_MULTI_TLDS, URL_SHORTENERS,
 )
 
 _TLD = _tldextract.TLDExtract(
     suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True
 )
 
-ANALYSIS_VERSION = "2.0-heuristic"
+ANALYSIS_VERSION = "2.2-heuristic"
 
 _W: dict[str, float] = {
-    "no_https": 0.05, "long_url": 0.05, "very_long_url": 0.10,
-    "brand_impersonation": 0.50, "typosquat": 0.55, "homograph": 0.60,
-    "brand_in_path": 0.05, "credential_kw_host": 0.15,
-    "credential_kw_path": 0.03, "multiple_kw": 0.25,
-    "freenom_tld": 0.20, "medium_risky_tld": 0.12, "light_risky_tld": 0.08,
-    "excessive_subdomains": 0.15, "hyphen_heavy": 0.10, "punycode_label": 0.25,
-    "public_ip": 0.45, "obfuscated_ip": 0.60, "non_public_address": 0.08,
-    "deceptive_userinfo": 0.60, "external_redirect": 0.30,
-    "encoded_hostname": 0.50, "double_encoding": 0.25, "excessive_encoding": 0.12,
-    "shortener": 0.15, "nondefault_port": 0.10, "double_slash_path": 0.04,
-    "high_entropy_label": 0.10, "control_chars": 0.30, "had_backslash": 0.20,
+    # Structural
+    "no_https":               0.05,
+    "long_url":               0.05,
+    "very_long_url":          0.10,
+    # Brand / identity
+    "brand_impersonation":    0.50,
+    "typosquat":              0.55,
+    "homograph":              0.60,
+    "brand_in_path":          0.05,
+    # Keywords
+    "credential_kw_host":     0.15,
+    "credential_kw_path":     0.03,
+    "multiple_kw":            0.25,
+    # TLD
+    "freenom_tld":            0.20,
+    "medium_risky_tld":       0.12,
+    "light_risky_tld":        0.08,
+    # Host structure
+    "excessive_subdomains":   0.15,
+    "hyphen_heavy":           0.10,
+    "punycode_label":         0.25,
+    # IP
+    "public_ip":              0.45,
+    "obfuscated_ip":          0.60,
+    "non_public_address":     0.08,
+    # Deception
+    "deceptive_userinfo":     0.60,
+    "external_redirect":      0.30,
+    # Encoding
+    "encoded_hostname":       0.50,
+    "double_encoding":        0.25,
+    "excessive_encoding":     0.12,
+    # Misc
+    "shortener":              0.15,
+    "nondefault_port":        0.10,
+    "double_slash_path":      0.04,
+    "high_entropy_label":     0.10,
+    "control_chars":          0.30,
+    "had_backslash":          0.20,
+    # Path signals (new in v2.1)
+    "path_cgi_bin":           0.25,
+    "path_sitekey":           0.30,
+    "path_wp_login":          0.20,
+    "path_xmlrpc":            0.20,
+    "path_admin_login":       0.15,
+    "path_account_action":    0.20,
+    "path_base64":            0.25,
+    "path_secure_resource":   0.20,
+    "path_script_query":      0.15,
+    "path_update_credential": 0.35,
+    "path_uuid":              0.08,
+    "path_high_entropy":      0.18,
+    # New in v2.2
+    "path_cvv":               0.35,
+    "numeric_domain":         0.20,
+    "risky_multi_tld":        0.15,
 }
 
 _LEVEL_CUTS = ((1, "safe"), (20, "low"), (45, "medium"), (70, "high"), (101, "critical"))
@@ -106,7 +158,6 @@ def parse_url(raw: str) -> ParsedUrl:
 
     host_raw, port = netloc_noport, None
     if netloc_noport.startswith("["):
-        # IPv6 literal
         bracket_end = netloc_noport.find("]")
         if bracket_end != -1:
             host_raw = netloc_noport[1:bracket_end]
@@ -122,7 +173,7 @@ def parse_url(raw: str) -> ParsedUrl:
     host_lower = host_decoded.lower().rstrip(".")
     try:
         host_ascii = host_lower.encode("idna").decode("ascii")
-    except (UnicodeError, UnicodeDecodeError, UnicodeError):
+    except (UnicodeError, UnicodeDecodeError):
         host_ascii = host_lower
 
     if not host_ascii:
@@ -177,6 +228,15 @@ def _score_to_level(score: int) -> str:
         if score < threshold:
             return label
     return "critical"
+
+
+def _shannon_entropy(s: str) -> float:
+    if not s:
+        return 0.0
+    freq: dict[str, int] = {}
+    for ch in s:
+        freq[ch] = freq.get(ch, 0) + 1
+    return -sum((c / len(s)) * math.log2(c / len(s)) for c in freq.values())
 
 
 @dataclass
@@ -361,7 +421,7 @@ def _check_brand(ctx: _Ctx) -> None:
                     "high")
             ctx.rec(f"Verify you are on the official {brand_label} domain before entering credentials.")
             return
-        # Brand embedded in registrable label — must be whole token after splitting on hyphens
+        # Brand embedded in registrable label — whole token only
         folded_reg = _apply_confusables(reg_label.lower())
         reg_tokens = set(re.split(r"[^a-z0-9]", folded_reg))
         if brand_label in reg_tokens and brand_label != reg_label:
@@ -405,7 +465,7 @@ def _check_homograph(ctx: _Ctx) -> None:
             ctx.add("homograph", "Homograph / mixed-script domain",
                     f"Label '{label}' decodes to '{decoded}' with non-Latin characters ({', '.join(scripts)}).",
                     "high")
-            ctx.rec("Non-Latin characters that mimic Latin letters are a homograph attack. Do not trust the visual appearance.")
+            ctx.rec("Non-Latin characters that mimic Latin letters are a homograph attack.")
         else:
             ctx.add("punycode_label", "Punycode domain label",
                     f"Label '{label}' is punycode-encoded — verify it does not resemble a trusted brand.",
@@ -414,11 +474,7 @@ def _check_homograph(ctx: _Ctx) -> None:
 
 
 def _check_keywords(ctx: _Ctx) -> None:
-    """Credential keyword detection — token-based, location-weighted.
-    Suppressed entirely for known-legitimate registrable domains to avoid
-    false positives on e.g. login.microsoftonline.com.
-    """
-    # Skip keyword detection for fully legitimate brand domains
+    """Token-based credential keyword detection. Suppressed for legitimate brand domains."""
     if ctx.registrable in ALL_LEGITIMATE:
         return
 
@@ -439,9 +495,12 @@ def _check_keywords(ctx: _Ctx) -> None:
                 f"Credential keyword '{next(iter(host_kw))}' found in the hostname.",
                 "medium")
     elif len(path_kw) >= 2:
-        ctx.add("credential_kw_path", "Credential keywords in path",
-                f"Credential keywords in path: {', '.join(sorted(path_kw)[:3])}.",
-                "low")
+        # Suppress path-only kw if no other signal — avoids FP on /login, /account etc.
+        # Only add it when there's at least one other indicator already firing.
+        if ctx._ids:
+            ctx.add("credential_kw_path", "Credential keywords in path",
+                    f"Credential keywords in path: {', '.join(sorted(path_kw)[:3])}.",
+                    "low")
 
 
 def _check_tld(ctx: _Ctx) -> None:
@@ -466,7 +525,7 @@ def _check_encoding(ctx: _Ctx) -> None:
         ctx.rec("Percent-encoded hostnames are used to bypass filters. Do not visit.")
     if ctx.parsed.encoding_depth >= 2:
         ctx.add("double_encoding", "Double URL encoding",
-                f"URL is encoded {ctx.parsed.encoding_depth} times — double encoding evades security scanners.", "medium")
+                f"URL is encoded {ctx.parsed.encoding_depth} times — double encoding evades scanners.", "medium")
     raw_pct = ctx.parsed.path.count("%") + ctx.parsed.raw_query.count("%")
     if raw_pct >= 5:
         ctx.add("excessive_encoding", "Excessive URL encoding",
@@ -487,6 +546,15 @@ def _check_shortener(ctx: _Ctx) -> None:
 
 
 def _check_redirect(ctx: _Ctx) -> None:
+    """Flag open-redirect params. Suppressed for OAuth flows."""
+    # Suppress for known OAuth provider domains
+    if ctx.registrable in OAUTH_PROVIDERS or ctx.parsed.host_ascii in OAUTH_PROVIDERS:
+        return
+    # Suppress when path contains /oauth2/ or /authorize — standard OAuth pattern
+    # that legitimately carries redirect_uri on any provider
+    if re.search(r"/(oauth2?|authorize|auth)/", ctx.parsed.path, re.IGNORECASE):
+        return
+
     for key, value in ctx.parsed.query_pairs:
         if key.lower() not in REDIRECT_PARAMS:
             continue
@@ -506,9 +574,27 @@ def _check_redirect(ctx: _Ctx) -> None:
 
 def _check_hyphens(ctx: _Ctx) -> None:
     reg_label = ctx.ext.domain or ""
-    if reg_label.count("-") >= 3:
+    if reg_label.count("-") >= 2:
         ctx.add("hyphen_heavy", "Hyphen-heavy registrable domain",
                 f"Registrable domain '{ctx.registrable}' has {reg_label.count('-')} hyphens.", "medium")
+
+
+def _check_numeric_domain(ctx: _Ctx) -> None:
+    """Pure numeric registrable domain (e.g. 2018337.com) — not used by legitimate sites."""
+    reg_label = ctx.ext.domain or ""
+    if reg_label.isdigit() and len(reg_label) >= 4:
+        ctx.add("numeric_domain", "Numeric-only domain",
+                f"Registrable domain '{ctx.registrable}' is entirely numeric — extremely unusual for legitimate sites.",
+                "medium")
+
+
+def _check_multi_tld(ctx: _Ctx) -> None:
+    """Flag known-abused multi-label TLDs like .my.id."""
+    suffix = ctx.ext.suffix or ""
+    if suffix in RISKY_MULTI_TLDS:
+        ctx.add("risky_multi_tld", "Risky multi-label TLD",
+                f"Domain uses '.{suffix}', a free/abused multi-label TLD.",
+                "medium")
 
 
 def _check_double_slash(ctx: _Ctx) -> None:
@@ -518,16 +604,51 @@ def _check_double_slash(ctx: _Ctx) -> None:
 
 
 def _check_entropy(ctx: _Ctx) -> None:
+    """Flag high-entropy domain labels (DGA-like). Minimum 14 chars to avoid hyphenated legit domains."""
     for label in ctx.parsed.host_ascii.split("."):
-        if len(label) < 12:
+        if len(label) < 14:
             continue
-        freq: dict[str, int] = {}
-        for ch in label:
-            freq[ch] = freq.get(ch, 0) + 1
-        entropy = -sum((c / len(label)) * math.log2(c / len(label)) for c in freq.values())
-        if entropy > 3.5:
+        if _shannon_entropy(label) > 3.8:
             ctx.add("high_entropy_label", "High-entropy domain label",
-                    f"Label '{label}' looks randomly generated (entropy {entropy:.1f}).", "low")
+                    f"Label '{label}' looks randomly generated (entropy {_shannon_entropy(label):.1f}).", "low")
+            break
+
+
+def _check_path_signals(ctx: _Ctx) -> None:
+    """
+    Match path against known phishing infrastructure patterns.
+    These catch phishing URLs that use normal domains but characteristic paths
+    (cgi-bin, sitekey.php, base64 blobs, credential-update paths, etc.).
+    """
+    path = ctx.parsed.path
+    for pattern, ind_id, display_name in PHISHING_PATH_PATTERNS:
+        if re.search(pattern, path, re.IGNORECASE):
+            severity = "high" if _W.get(ind_id, 0) >= 0.25 else "medium"
+            ctx.add(ind_id, display_name,
+                    f"Path matches phishing infrastructure pattern: '{pattern}'.",
+                    severity)
+
+
+def _check_path_entropy(ctx: _Ctx) -> None:
+    """
+    Flag high-entropy path segments — random-looking paths like
+    /CRbbRVJmfPVTtQZPzqSKZJGqHQVFhqkHm/ are characteristic of phishing kits
+    that embed tokens or session IDs to track victims.
+    Legitimate sites use readable paths or short tokens.
+    """
+    # Split on / and check each segment
+    for segment in ctx.parsed.path.split("/"):
+        if len(segment) < 16:
+            continue
+        # Skip known-safe patterns: hex hashes (git SHAs), numeric IDs
+        if re.match(r"^[0-9a-f]{16,64}$", segment, re.IGNORECASE):
+            continue
+        if _shannon_entropy(segment) > 3.8:
+            ctx.add("path_high_entropy", "High-entropy path segment",
+                    f"Path segment '{segment[:40]}' appears randomly generated — "
+                    "phishing kits often embed tracking tokens in URLs.",
+                    "medium")
+            ctx.rec("Random-looking path segments are used by phishing kits to track victims.")
             break
 
 
@@ -571,6 +692,10 @@ def analyse_url(raw_url: str) -> tuple[str, int, str, list[Indicator], list[str]
     _check_hyphens(ctx)
     _check_double_slash(ctx)
     _check_entropy(ctx)
+    _check_path_signals(ctx)
+    _check_path_entropy(ctx)
+    _check_numeric_domain(ctx)
+    _check_multi_tld(ctx)
 
     raw_score = _noisy_or(ctx._weights)
     score = _apply_escalation_floors(ctx, raw_score)
