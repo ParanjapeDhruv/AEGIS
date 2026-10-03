@@ -115,8 +115,35 @@ export default function DashboardPage() {
   const total   = stats?.total ?? 0
   const weekCount = summary?.scans_this_week ?? 0
 
+  function handleRetry() {
+    setLoading(true)
+    setApiError(null)
+    dashboard.getSummary()
+      .then(data => { setSummary(data); setLoading(false) })
+      .catch(err => { setApiError(err.message ?? 'Failed to load.'); setLoading(false) })
+  }
+
   return (
     <div className="dashboard">
+      {/* Dashboard header with refresh */}
+      <div className="dashboard-header">
+        <div>
+          <h1 className="dashboard-title">Security Dashboard</h1>
+          {!loading && summary && (
+            <p className="dashboard-subtitle">
+              {total === 0
+                ? 'No scans yet — run an analysis to populate your dashboard.'
+                : `${total} total scan${total !== 1 ? 's' : ''} on record`}
+            </p>
+          )}
+        </div>
+        {!loading && (
+          <button className="dashboard-refresh-btn" onClick={handleRetry} title="Refresh dashboard">
+            ↻ Refresh
+          </button>
+        )}
+      </div>
+
       {/* Top metric cards */}
       <section className="dashboard-metrics">
         <DashboardCard
@@ -170,16 +197,7 @@ export default function DashboardPage() {
       {apiError && !loading && (
         <div className="dashboard-error" role="alert">
           <span>⚠️ {apiError}</span>
-          <button
-            className="dashboard-error-retry"
-            onClick={() => {
-              setLoading(true)
-              setApiError(null)
-              dashboard.getSummary()
-                .then(data => { setSummary(data); setLoading(false) })
-                .catch(err => { setApiError(err.message ?? 'Failed to load.'); setLoading(false) })
-            }}
-          >
+          <button className="dashboard-error-retry" onClick={handleRetry}>
             Retry
           </button>
         </div>
